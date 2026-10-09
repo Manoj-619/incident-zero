@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.budget import BudgetTracker
-from app.llm.gemini_client import GeminiClient
 from app.models import HypothesisScore, ToolCallRecord
 
 SKEPTIC_SYSTEM = """You are the Skeptic in INCIDENT ZERO.
@@ -96,43 +94,20 @@ def _score_from_evidence(
     )
 
 
-def run_skeptic(
-    hypothesis: str,
-    records: list[ToolCallRecord],
-    prior: HypothesisScore,
-    gemini: GeminiClient,
-    budget: BudgetTracker,
-) -> HypothesisScore:
-    budget.check_or_raise()
-    scored = _score_from_evidence(hypothesis, records, prior)
+def run_skeptic(hypothesis, records, prior, gemini, budget):
+    from app.agents.investigator import ask
+    from app.evidence import validate_citations
 
-    if gemini.enabled:
-        budget.inc_llm()
-        budget.check_or_raise()
-        evidence_payload = [
-            {
-                "evidence_id": r.evidence_id,
-                "tool": r.tool_name,
-                "output": r.output,
-            }
-            for r in records
-        ]
-        user = (
-            f"Hypothesis: {hypothesis}\n"
-            f"Prior confidence: {prior.posterior_confidence}\n"
-            f"Evidence: {evidence_payload}\n"
-            "Adjust ONLY if your reasoning matches the evidence IDs."
-        )
-        try:
-            parsed = gemini.generate_json(SKEPTIC_SYSTEM, user)
-            llm_post = float(parsed.get("posterior_confidence", scored.posterior_confidence))
-            # Blend toward deterministic score so LLM cannot override facts
-            blended = round(0.7 * scored.posterior_confidence + 0.3 * llm_post, 2)
-            scored.posterior_confidence = blended
-            llm_rat = str(parsed.get("rationale", "")).strip()
-            if llm_rat:
-                scored.rationale = f"{scored.rationale} {llm_rat}"
-        except Exception:
-            pass
-
-    return scored
+    result = ask(
+        gemini,
+        budget,
+        'You are the Skeptic. Challenge causal assumptions; agree if supported. Return {"primary": HypothesisScore, "alternative": HypothesisScore}. Each HypothesisScore contains hypothesis, prior_confidence, posterior_confidence (heuristic 0-1), supporting_evidence_ids, contradicting_evidence_ids, rationale. The alternative must be inferred from the evidence, never invented as a fact.',
+        {"primary": prior.model_dump(), "evidence": [r.model_dump() for r in records]},
+    )
+    primary = HypothesisScore.model_validate(result["primary"])
+    alternative = HypothesisScore.model_validate(result["alternative"])
+    valid = {r.evidence_id for r in records}
+    for score in (primary, alternative):
+        validate_citations(score.supporting_evidence_ids, valid)
+        validate_citations(score.contradicting_evidence_ids, valid)
+    return primary, alternative

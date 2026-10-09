@@ -1,16 +1,21 @@
 services:
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
+    env_file: .env
     environment:
-      CORS_ORIGINS: "http://localhost:5173,http://localhost:4173"
-
+      DATABASE_PATH: /state/incident-zero.sqlite3
+    volumes:
+      - incident-state:/state
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
   frontend:
     build: ./frontend
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  incident-state:

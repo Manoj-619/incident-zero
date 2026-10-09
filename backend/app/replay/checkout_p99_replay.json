@@ -19,20 +19,37 @@
           "db_max_connections": 100
         }
       },
-      "evidence_id": "ev-a1b2c3d4e5f67890"
+      "evidence_id": "ev-ef02983f05aa9a3d"
     },
     {
       "tool_name": "fetch_logs",
-      "arguments": {"limit": 10},
+      "arguments": {
+        "limit": 10
+      },
       "output": {
         "logs": [
-          {"ts": "2026-10-09T14:02:11Z", "level": "WARN", "service": "checkout-api", "msg": "slow query orders SETTLEMENT batch id=8842 duration_ms=1904"},
-          {"ts": "2026-10-09T14:02:09Z", "level": "INFO", "service": "checkout-api", "msg": "waiting on row lock orders.id=4410291"},
-          {"ts": "2026-10-09T14:01:58Z", "level": "INFO", "service": "redis-sidecar", "msg": "pool stats active=12 max=50 wait_p99_ms=4"}
+          {
+            "ts": "2026-10-09T14:02:11Z",
+            "level": "WARN",
+            "service": "checkout-api",
+            "msg": "slow query orders SETTLEMENT batch id=8842 duration_ms=1904"
+          },
+          {
+            "ts": "2026-10-09T14:02:09Z",
+            "level": "INFO",
+            "service": "checkout-api",
+            "msg": "waiting on row lock orders.id=4410291"
+          },
+          {
+            "ts": "2026-10-09T14:01:58Z",
+            "level": "INFO",
+            "service": "redis-sidecar",
+            "msg": "pool stats active=12 max=50 wait_p99_ms=4"
+          }
         ],
         "count": 3
       },
-      "evidence_id": "ev-b2c3d4e5f6789012"
+      "evidence_id": "ev-f8dc47fa353188c6"
     },
     {
       "tool_name": "fetch_traces",
@@ -45,7 +62,7 @@
           "postgres_lock_wait_share_pct": 71
         }
       },
-      "evidence_id": "ev-c3d4e5f678901234"
+      "evidence_id": "ev-479e1a12bb1df683"
     }
   ],
   "hypotheses": [
@@ -54,7 +71,10 @@
       "prior_confidence": 0.55,
       "posterior_confidence": 0.45,
       "supporting_evidence_ids": [],
-      "contradicting_evidence_ids": ["ev-a1b2c3d4e5f67890", "ev-c3d4e5f678901234"],
+      "contradicting_evidence_ids": [
+        "ev-ef02983f05aa9a3d",
+        "ev-479e1a12bb1df683"
+      ],
       "rationale": "Alert heuristic suggested Redis; metrics show negligible pool wait."
     },
     {
@@ -62,16 +82,20 @@
       "prior_confidence": 0.45,
       "posterior_confidence": 0.22,
       "supporting_evidence_ids": [],
-      "contradicting_evidence_ids": ["ev-a1b2c3d4e5f67890", "ev-b2c3d4e5f6789012", "ev-c3d4e5f678901234"],
-      "rationale": "Supporting evidence: . Contradicting evidence: ev-a1b2c3d4e5f67890, ev-b2c3d4e5f6789012, ev-c3d4e5f678901234. Logs show row lock waits; traces dominated by Postgres lock time."
+      "contradicting_evidence_ids": [
+        "ev-ef02983f05aa9a3d",
+        "ev-f8dc47fa353188c6",
+        "ev-479e1a12bb1df683"
+      ],
+      "rationale": "Supporting evidence: . Contradicting evidence: ev-ef02983f05aa9a3d, ev-f8dc47fa353188c6, ev-479e1a12bb1df683. Logs show row lock waits; traces dominated by Postgres lock time."
     }
   ],
   "experiments": [
     {
       "experiment_id": "exp-replay01",
       "hypothesis_tested": "Redis connection pool exhaustion",
-      "code_hash": "replay_static",
-      "stdout": "simulated_checkout_p99_ms= 3958\nsupports_redis_pool_hypothesis= False",
+      "code_hash": "illustrative-v2",
+      "stdout": "simulated_checkout_p99_ms=2138.0\nsupports_redis_pool_hypothesis=False",
       "stderr": "",
       "exit_code": 0,
       "summary": "Simulation does not support the current leading hypothesis.",
@@ -82,8 +106,14 @@
     "leading_hypothesis": "PostgreSQL row lock contention on orders during settlement batch",
     "confidence": 0.82,
     "explanation": "Counterfactual experiment failed to reproduce improvement under the Redis pool theory. Trace and log evidence point to database lock wait dominating checkout latency.",
-    "evidence_ids": ["ev-a1b2c3d4e5f67890", "ev-b2c3d4e5f6789012", "ev-c3d4e5f678901234"],
-    "experiment_ids": ["exp-replay01"]
+    "evidence_ids": [
+      "ev-ef02983f05aa9a3d",
+      "ev-f8dc47fa353188c6",
+      "ev-479e1a12bb1df683"
+    ],
+    "experiment_ids": [
+      "exp-replay01"
+    ]
   },
   "remediation": {
     "action": "Stagger settlement batch + shorten orders row lock window (simulated)",
@@ -99,11 +129,29 @@
     "reason": null
   },
   "events": [
-    {"phase": "init", "message": "Replay mode — no LLM or API key required"},
-    {"phase": "investigate", "message": "Investigator evidence (recorded)"},
-    {"phase": "skeptic", "message": "Hypothesis Battle — Skeptic lowered Redis confidence"},
-    {"phase": "experiment", "message": "Counterfactual: pool doubling simulation"},
-    {"phase": "judge", "message": "Verdict revised to DB lock contention"},
-    {"phase": "complete", "message": "Investigation complete — remediation awaiting approval"}
+    {
+      "phase": "init",
+      "message": "Replay mode \u2014 no LLM or API key required"
+    },
+    {
+      "phase": "investigate",
+      "message": "Illustrative investigator evidence from synthetic tool fixtures"
+    },
+    {
+      "phase": "skeptic",
+      "message": "Hypothesis Battle \u2014 Skeptic lowered Redis confidence"
+    },
+    {
+      "phase": "experiment",
+      "message": "Counterfactual: pool doubling simulation"
+    },
+    {
+      "phase": "judge",
+      "message": "Verdict revised to DB lock contention"
+    },
+    {
+      "phase": "complete",
+      "message": "Investigation complete \u2014 remediation awaiting approval"
+    }
   ]
 }

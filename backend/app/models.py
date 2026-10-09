@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,7 @@ class InvestigationPhase(str, Enum):
     EXPERIMENT = "experiment"
     JUDGE = "judge"
     COMPLETE = "complete"
+    FAILED = "failed"
     BUDGET_EXCEEDED = "budget_exceeded"
 
 
@@ -21,6 +22,8 @@ class ToolCallRecord(BaseModel):
     arguments: dict[str, Any]
     output: dict[str, Any]
     evidence_id: str
+    duration_ms: float = 0
+    timestamp: str = ""
 
 
 class HypothesisScore(BaseModel):
@@ -45,7 +48,7 @@ class ExperimentResult(BaseModel):
 
 class Verdict(BaseModel):
     leading_hypothesis: str
-    confidence: float
+    confidence: float = Field(ge=0, le=1)
     explanation: str
     evidence_ids: list[str]
     experiment_ids: list[str]
@@ -56,6 +59,8 @@ class RemediationPlan(BaseModel):
     simulated: bool = True
     approved: bool = False
     executed: bool = False
+    intervention_id: str | None = None
+    recovery: dict[str, float] = Field(default_factory=dict)
 
 
 class BudgetSnapshot(BaseModel):
@@ -82,9 +87,9 @@ class InvestigationState(BaseModel):
 
 class StartInvestigationRequest(BaseModel):
     scenario_id: str = "checkout-p99-spike"
-    mode: str = "live"  # live | replay
+    mode: Literal["live", "replay"] = "replay"
 
 
 class ApproveRemediationRequest(BaseModel):
     investigation_id: str
-    approved: bool = True
+    approved: bool

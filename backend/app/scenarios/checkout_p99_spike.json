@@ -3,8 +3,6 @@
   "title": "Checkout P99 latency spike",
   "alert_text": "P99 checkout latency exceeded 2s for 8 minutes. Alert rule: redis_pool_exhaustion_heuristic.",
   "public_summary": "Production checkout latency spiked; on-call initially suspects Redis connection pool exhaustion.",
-  "initial_hypothesis_hint": "Redis connection pool exhaustion",
-  "ground_truth_internal_only": "PostgreSQL row lock contention on orders table during batch settlement — not Redis.",
   "tool_fixtures": {
     "fetch_metrics": {
       "redis_pool_active": 12,
@@ -18,9 +16,24 @@
     },
     "fetch_logs": {
       "sample": [
-        {"ts": "2026-10-09T14:02:11Z", "level": "WARN", "service": "checkout-api", "msg": "slow query orders SETTLEMENT batch id=8842 duration_ms=1904"},
-        {"ts": "2026-10-09T14:02:09Z", "level": "INFO", "service": "checkout-api", "msg": "waiting on row lock orders.id=4410291"},
-        {"ts": "2026-10-09T14:01:58Z", "level": "INFO", "service": "redis-sidecar", "msg": "pool stats active=12 max=50 wait_p99_ms=4"}
+        {
+          "ts": "2026-10-09T14:02:11Z",
+          "level": "WARN",
+          "service": "checkout-api",
+          "msg": "slow query orders SETTLEMENT batch id=8842 duration_ms=1904"
+        },
+        {
+          "ts": "2026-10-09T14:02:09Z",
+          "level": "INFO",
+          "service": "checkout-api",
+          "msg": "waiting on row lock orders.id=4410291"
+        },
+        {
+          "ts": "2026-10-09T14:01:58Z",
+          "level": "INFO",
+          "service": "redis-sidecar",
+          "msg": "pool stats active=12 max=50 wait_p99_ms=4"
+        }
       ]
     },
     "fetch_traces": {

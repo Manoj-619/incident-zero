@@ -41,7 +41,9 @@ TOOL_SCHEMAS = [
         "description": "Fetch recent structured logs for checkout and dependencies.",
         "parameters": {
             "type": "object",
-            "properties": {"limit": {"type": "integer", "description": "Max log lines"}},
+            "properties": {
+                "limit": {"type": "integer", "description": "Max log lines"}
+            },
             "required": [],
         },
     },
@@ -58,6 +60,18 @@ def run_tool(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> ToolCallRecord:
+    import time
+    from datetime import datetime, timezone
+
+    started = time.monotonic()
+    timestamp = datetime.now(timezone.utc).isoformat()
+    allowed = {"limit"} if tool_name == "fetch_logs" else set()
+    if not isinstance(arguments, dict) or set(arguments) - allowed:
+        raise ValueError("Unsupported tool arguments")
+    if "limit" in arguments and (
+        type(arguments["limit"]) is not int or not 1 <= arguments["limit"] <= 60
+    ):
+        raise ValueError("Log limit must be an integer from 1 to 60")
     if tool_name not in TOOL_REGISTRY:
         raise ValueError(f"Unknown tool: {tool_name}")
     output = TOOL_REGISTRY[tool_name](scenario, arguments)
@@ -67,4 +81,6 @@ def run_tool(
         arguments=arguments,
         output=output,
         evidence_id=eid,
+        duration_ms=round((time.monotonic() - started) * 1000, 3),
+        timestamp=timestamp,
     )

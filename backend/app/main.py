@@ -1,52 +1,54 @@
-from __future__ import annotations
-
+import hashlib
+import secrets
+import uuid
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.config import get_settings
-from app.models import ApproveRemediationRequest, InvestigationState, StartInvestigationRequest
+from app.models import (
+    ApproveRemediationRequest,
+    InvestigationState,
+    StartInvestigationRequest,
+)
 from app.orchestrator import run_live_investigation, run_replay_investigation
-from app.rate_limit import DailyCap, RateLimiter
-from app.scenarios import list_scenarios
+from app.scenarios import list_scenarios, get_scenario
+from app.store import Store
 
-app = FastAPI(title="INCIDENT ZERO", version="0.1.0")
+app = FastAPI(title="INCIDENT ZERO", version="0.2.0")
 settings = get_settings()
-rate_limiter = RateLimiter(per_minute=settings.rate_limit_per_minute)
-daily_cap = DailyCap(cap=settings.live_daily_cap)
-
-_investigations: dict[str, InvestigationState] = {}
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    get_settings()
-
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins.split(","),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Demo-Secret", "X-Session-Token"],
 )
 
 
-def _client_key(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
+def store():
+    return Store(get_settings().database_path)
+
+
+def owner(token):
+    if not token or not 32 <= len(token) <= 128:
+        raise HTTPException(401, "A client session token is required")
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@app.middleware("http")
+async def headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health():
     return {"status": "ok", "service": "incident-zero"}
 
 
 @app.get("/api/scenarios")
-def scenarios() -> list[dict]:
+def scenarios():
     return [
         {
             "scenario_id": s.scenario_id,
@@ -59,11 +61,12 @@ def scenarios() -> list[dict]:
 
 
 @app.get("/api/config/public")
-def public_config() -> dict:
+def public_config():
+    s = get_settings()
     return {
-        "allow_public_live": settings.allow_public_live,
-        "live_requires_secret": bool(settings.demo_secret),
-        "gemini_configured": bool(settings.gemini_api_key),
+        "allow_public_live": s.allow_public_live,
+        "live_requires_secret": bool(s.demo_secret),
+        "gemini_configured": bool(s.gemini_api_key),
         "replay_available": True,
     }
 
@@ -73,64 +76,55 @@ def start_investigation(
     request: Request,
     body: StartInvestigationRequest,
     x_demo_secret: str | None = Header(default=None),
-) -> InvestigationState:
-    key = _client_key(request)
-    if not rate_limiter.allow(key):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
+    x_session_token: str | None = Header(default=None),
+):
+    identity = owner(x_session_token)
+    s, db = get_settings(), store()
+    key = request.client.host if request.client else "unknown"
+    if not db.allow("rate:" + key, s.rate_limit_per_minute, 60):
+        raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
+    try:
+        get_scenario(body.scenario_id)
+    except KeyError:
+        raise HTTPException(404, "Unknown scenario")
     if body.mode == "replay":
         state = run_replay_investigation(body.scenario_id)
-        _investigations[state.investigation_id] = state
-        return state
-
-    if not settings.gemini_api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="Live investigations require GEMINI_API_KEY. Use mode=replay for offline demo.",
-        )
-
-    if not settings.allow_public_live:
-        if not settings.demo_secret or x_demo_secret != settings.demo_secret:
-            raise HTTPException(
-                status_code=403,
-                detail="Public live investigations disabled. Use replay mode or provide X-Demo-Secret.",
-            )
-
-    if not daily_cap.allow(key):
-        raise HTTPException(status_code=429, detail="Daily live investigation cap reached")
-
-    state = run_live_investigation(settings, body.scenario_id)
-    _investigations[state.investigation_id] = state
+        state.investigation_id = str(uuid.uuid4())
+    else:
+        if not s.gemini_api_key:
+            raise HTTPException(503, "Live AI unavailable; use replay")
+        if not s.allow_public_live and (
+            not s.demo_secret
+            or not secrets.compare_digest(x_demo_secret or "", s.demo_secret)
+        ):
+            raise HTTPException(403, "Live access requires the operator secret")
+        if not db.allow("live:global", s.live_daily_cap, 86400):
+            raise HTTPException(429, "Global live investigation cap reached")
+        state = run_live_investigation(s, body.scenario_id)
+    db.save(state, identity)
     return state
 
 
 @app.get("/api/investigations/{investigation_id}", response_model=InvestigationState)
-def get_investigation(investigation_id: str) -> InvestigationState:
-    state = _investigations.get(investigation_id)
-    if state is None and investigation_id == "replay-checkout-p99":
-        state = run_replay_investigation("checkout-p99-spike")
-    if state is None:
-        raise HTTPException(status_code=404, detail="Investigation not found")
+def get_investigation(
+    investigation_id: str, x_session_token: str | None = Header(default=None)
+):
+    state = store().get(investigation_id, owner(x_session_token))
+    if not state:
+        raise HTTPException(404, "Investigation not found")
     return state
 
 
 @app.post("/api/remediation/approve", response_model=InvestigationState)
-def approve_remediation(body: ApproveRemediationRequest) -> InvestigationState:
-    state = _investigations.get(body.investigation_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    if state.remediation is None:
-        raise HTTPException(status_code=400, detail="No remediation plan")
-    if not body.approved:
-        state.remediation.approved = False
-        state.remediation.executed = False
-        return state
-    state.remediation.approved = True
-    state.remediation.executed = True
-    state.events.append(
-        {
-            "phase": "remediation",
-            "message": "Simulated remediation executed after explicit approval",
-        }
-    )
+def approve_remediation(
+    body: ApproveRemediationRequest, x_session_token: str | None = Header(default=None)
+):
+    try:
+        state = store().approve(
+            body.investigation_id, owner(x_session_token), body.approved
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    if not state:
+        raise HTTPException(404, "Investigation not found")
     return state
