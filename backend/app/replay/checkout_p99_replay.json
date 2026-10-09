@@ -1,0 +1,109 @@
+{
+  "investigation_id": "replay-checkout-p99",
+  "scenario_id": "checkout-p99-spike",
+  "phase": "complete",
+  "replay": true,
+  "tool_calls": [
+    {
+      "tool_name": "fetch_metrics",
+      "arguments": {},
+      "output": {
+        "metrics": {
+          "redis_pool_active": 12,
+          "redis_pool_max": 50,
+          "redis_pool_wait_ms_p99": 4,
+          "checkout_p99_ms": 2140,
+          "checkout_p50_ms": 890,
+          "db_lock_wait_ms_p99": 1820,
+          "db_active_connections": 38,
+          "db_max_connections": 100
+        }
+      },
+      "evidence_id": "ev-a1b2c3d4e5f67890"
+    },
+    {
+      "tool_name": "fetch_logs",
+      "arguments": {"limit": 10},
+      "output": {
+        "logs": [
+          {"ts": "2026-10-09T14:02:11Z", "level": "WARN", "service": "checkout-api", "msg": "slow query orders SETTLEMENT batch id=8842 duration_ms=1904"},
+          {"ts": "2026-10-09T14:02:09Z", "level": "INFO", "service": "checkout-api", "msg": "waiting on row lock orders.id=4410291"},
+          {"ts": "2026-10-09T14:01:58Z", "level": "INFO", "service": "redis-sidecar", "msg": "pool stats active=12 max=50 wait_p99_ms=4"}
+        ],
+        "count": 3
+      },
+      "evidence_id": "ev-b2c3d4e5f6789012"
+    },
+    {
+      "tool_name": "fetch_traces",
+      "arguments": {},
+      "output": {
+        "traces": {
+          "hot_span": "checkout-api POST /v1/checkout",
+          "dominant_subspan": "postgres.query UPDATE orders SET status",
+          "redis_span_share_pct": 3,
+          "postgres_lock_wait_share_pct": 71
+        }
+      },
+      "evidence_id": "ev-c3d4e5f678901234"
+    }
+  ],
+  "hypotheses": [
+    {
+      "hypothesis": "Redis connection pool exhaustion",
+      "prior_confidence": 0.55,
+      "posterior_confidence": 0.45,
+      "supporting_evidence_ids": [],
+      "contradicting_evidence_ids": ["ev-a1b2c3d4e5f67890", "ev-c3d4e5f678901234"],
+      "rationale": "Alert heuristic suggested Redis; metrics show negligible pool wait."
+    },
+    {
+      "hypothesis": "Redis connection pool exhaustion",
+      "prior_confidence": 0.45,
+      "posterior_confidence": 0.22,
+      "supporting_evidence_ids": [],
+      "contradicting_evidence_ids": ["ev-a1b2c3d4e5f67890", "ev-b2c3d4e5f6789012", "ev-c3d4e5f678901234"],
+      "rationale": "Supporting evidence: . Contradicting evidence: ev-a1b2c3d4e5f67890, ev-b2c3d4e5f6789012, ev-c3d4e5f678901234. Logs show row lock waits; traces dominated by Postgres lock time."
+    }
+  ],
+  "experiments": [
+    {
+      "experiment_id": "exp-replay01",
+      "hypothesis_tested": "Redis connection pool exhaustion",
+      "code_hash": "replay_static",
+      "stdout": "simulated_checkout_p99_ms= 3958\nsupports_redis_pool_hypothesis= False",
+      "stderr": "",
+      "exit_code": 0,
+      "summary": "Simulation does not support the current leading hypothesis.",
+      "supports_hypothesis": false
+    }
+  ],
+  "verdict": {
+    "leading_hypothesis": "PostgreSQL row lock contention on orders during settlement batch",
+    "confidence": 0.82,
+    "explanation": "Counterfactual experiment failed to reproduce improvement under the Redis pool theory. Trace and log evidence point to database lock wait dominating checkout latency.",
+    "evidence_ids": ["ev-a1b2c3d4e5f67890", "ev-b2c3d4e5f6789012", "ev-c3d4e5f678901234"],
+    "experiment_ids": ["exp-replay01"]
+  },
+  "remediation": {
+    "action": "Stagger settlement batch + shorten orders row lock window (simulated)",
+    "simulated": true,
+    "approved": false,
+    "executed": false
+  },
+  "budget": {
+    "llm_rounds": 0,
+    "tool_calls": 0,
+    "elapsed_seconds": 0.01,
+    "exceeded": false,
+    "reason": null
+  },
+  "events": [
+    {"phase": "init", "message": "Replay mode — no LLM or API key required"},
+    {"phase": "investigate", "message": "Investigator evidence (recorded)"},
+    {"phase": "skeptic", "message": "Hypothesis Battle — Skeptic lowered Redis confidence"},
+    {"phase": "experiment", "message": "Counterfactual: pool doubling simulation"},
+    {"phase": "judge", "message": "Verdict revised to DB lock contention"},
+    {"phase": "complete", "message": "Investigation complete — remediation awaiting approval"}
+  ]
+}
