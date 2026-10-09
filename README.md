@@ -31,7 +31,7 @@ Open http://localhost:5173. Replay works without a key. It is an **illustrative 
 
 Configure `GEMINI_API_KEY` and a strong random `DEMO_SECRET` in the server environment. Keep `ALLOW_PUBLIC_LIVE=false`. Enter the operator secret in the password input at runtime. It is held in React memory only, never embedded in a Vite bundle. Use HTTPS for remote access; this shared operator secret is appropriate for a controlled demo, not enterprise identity management. No provider key is ever sent to the browser.
 
-`GEMINI_MODEL` defaults to `gemini-2.5-flash`; choose a model available in your account. The client uses the official `google-genai` SDK, JSON output, an output-token cap, a 20-second request timeout, and a single provider attempt. Account/model availability and paid live inference require separate verification with your key.
+`GEMINI_MODEL` defaults to `gemini-3.8-flash`; choose a model available in your account. The client uses the official `google-genai` SDK, JSON output, an output-token cap, a 20-second request timeout, and a single provider attempt. Account/model availability and paid live inference require separate verification with your key.
 
 Clients generate a random per-tab capability in session storage, sent as `X-Session-Token`. The database stores its hash. Read and approval endpoints require the same capability. Losing it loses access to that tab's investigation. This is anonymous session isolation, not user authentication.
 

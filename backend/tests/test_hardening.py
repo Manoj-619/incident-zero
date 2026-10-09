@@ -204,3 +204,36 @@ def test_judge_rejects_invented_citations(monkeypatch):
             GeminiClient(Settings(gemini_api_key="fake")),
             BudgetTracker(Settings()),
         )
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        (404, "model is unavailable"),
+        (429, "quota or rate limit"),
+        (503, "temporarily overloaded"),
+        (403, "access was denied"),
+    ],
+)
+def test_provider_errors_are_actionable_without_exposing_raw_messages(code, expected):
+    from app.llm.gemini_client import ProviderError
+
+    class Failure(RuntimeError):
+        pass
+
+    error = Failure("private provider payload")
+    error.code = code
+
+    class Models:
+        def generate_content(self, **kwargs):
+            raise error
+
+    class FakeClient:
+        models = Models()
+
+    client = GeminiClient(Settings(gemini_api_key="test"))
+    client._client = FakeClient()
+    with pytest.raises(ProviderError) as captured:
+        client.generate_json("role", "{}")
+    assert expected in str(captured.value)
+    assert "private" not in str(captured.value)

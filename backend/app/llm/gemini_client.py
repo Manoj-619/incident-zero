@@ -62,6 +62,17 @@ class GeminiClient:
             return value
         except Exception as exc:
             # Provider exceptions can contain credentials or request bodies; never expose them.
+            messages = {
+                400: "Gemini rejected the request. Check the key and model configuration, or use replay.",
+                401: "Gemini authentication failed. Replace the server API key.",
+                403: "Gemini access was denied. Check API key permissions and project access.",
+                404: "Configured Gemini model is unavailable to this account. Set GEMINI_MODEL to an available model.",
+                429: "Gemini quota or rate limit reached. Wait for quota to reset or use replay.",
+                503: "Gemini is temporarily overloaded. Try again later or use replay.",
+            }
             raise ProviderError(
-                "AI provider failed or returned invalid output. No diagnosis was substituted; retry or use replay."
+                messages.get(
+                    getattr(exc, "code", None),
+                    "AI provider failed or returned invalid output. Retry or use replay.",
+                )
             ) from exc

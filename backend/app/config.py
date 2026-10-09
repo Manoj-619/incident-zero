@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
 
     # Budgets (investigation hard stops)
     max_llm_rounds: int = Field(default=8, ge=0, le=20)
