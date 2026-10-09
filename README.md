@@ -1,12 +1,125 @@
-# INCIDENT ZERO
+<p align="center">
+  <img src="docs/assets/incident-zero-banner.svg" alt="INCIDENT ZERO — intelligence that challenges its own diagnosis" width="100%" />
+</p>
 
-**Evidence-driven adversarial incident investigation.** A hardened demonstration service using React, FastAPI, and Gemini on synthetic checkout telemetry.
+<p align="center">
+  <strong>Investigate the incident. Challenge the hypothesis. Test the intervention.</strong><br />
+  Evidence-driven AI incident investigation with an explicit human approval gate.
+</p>
 
-The Investigator selects allowlisted Python tools, then evaluates their outputs. The Skeptic evaluates competing explanations. The Experimenter selects a deterministic intervention. The Judge cites collected evidence. Every stage is bounded; malformed provider output or unsupported citations stop the investigation. No diagnosis is silently substituted.
+<p align="center">
+  <a href="https://github.com/Manoj-619/incident-zero/actions/workflows/ci.yml"><img src="https://github.com/Manoj-619/incident-zero/actions/workflows/ci.yml/badge.svg" alt="Verification workflow" /></a>
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/React-19-00E5FF?style=flat-square" alt="React 19" />
+  <img src="https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square" alt="FastAPI backend" />
+  <img src="https://img.shields.io/badge/Gemini-live_AI-8E75B2?style=flat-square" alt="Gemini integration" />
+  <img src="https://img.shields.io/badge/Environment-simulation-FFB547?style=flat-square" alt="Simulation environment" />
+</p>
 
-## Run locally
+<p align="center">
+  <a href="#the-demo">Watch the workflow</a> ·
+  <a href="#run-it">Run locally</a> ·
+  <a href="#under-the-hood">Architecture</a> ·
+  <a href="docs/OPERATIONS.md">Operating guide</a>
+</p>
 
-Python 3.12 and Node 22:
+---
+
+## An alert is a starting point. Evidence earns the verdict.
+
+Production incidents reward fast answers. They also punish the wrong ones.
+
+**INCIDENT ZERO** explores a more rigorous AI workflow: gather telemetry, challenge the leading explanation, compute a controlled counterfactual, and compare the evidence before proposing a response.
+
+Four specialized roles work through a bounded, sequential investigation. Python executes the tools and simulation. Gemini generates the live assessments. The human decides whether to apply the proposed **simulated** intervention.
+
+> **Project status:** A hardened proof of concept on synthetic telemetry. Replay works without an API key. Live mode integrates Gemini, but recent generation attempts returned provider overload errors; a complete live investigation has not yet been verified. No production infrastructure is connected.
+
+## The demo
+
+<p align="center">
+  <img src="docs/assets/counterfactual-lab.gif" alt="Animated counterfactual lab comparing synthetic baseline latency with two modeled interventions" width="100%" />
+  <br /><sub>Illustrative workflow animation. Synthetic data and simulated effects; not recorded live AI inference.</sub>
+</p>
+
+### A misleading alert. A better question.
+
+A checkout alert initially suggests **Redis connection pool exhaustion**. The collected telemetry gives the Skeptic a reason to look elsewhere:
+
+| Collected signal | Synthetic value | What it suggests |
+| :-- | --: | :-- |
+| Checkout P99 latency | **2,140 ms** | The checkout path is degraded. |
+| Redis pool wait | **4 ms** | Pool waiting contributes little to the reported latency. |
+| Redis active / maximum connections | **12 / 50** | The pool is not visibly at capacity. |
+| Database lock wait | **1,820 ms** | Database waiting warrants investigation. |
+| Postgres lock-wait trace share | **71%** | Lock time dominates the trace summary. |
+
+The counterfactual model then compares interventions:
+
+| Modeled condition | Checkout P99 |
+| :-- | --: |
+| Baseline | **2,140 ms** |
+| Double Redis pool capacity | **2,138 ms** |
+| Shorten the database lock window | **775 ms** |
+
+The illustrative replay favors **PostgreSQL row-lock contention during settlement**. These comparisons test explicit simulation assumptions; they do not establish real-world causality.
+
+## The investigation engine
+
+| Role | Responsibility | Reviewable output |
+| :-- | :-- | :-- |
+| **Investigator** | Select allowlisted tools and assess the returned telemetry. | Initial hypothesis, collected evidence, heuristic confidence. |
+| **Skeptic** | Challenge causal assumptions and compare an alternative explanation. | Supporting evidence, contradictions, revised assessment. |
+| **Experimenter** | Select a permitted counterfactual intervention. | Deterministic Python-computed outcome. |
+| **Judge** | Compare hypotheses, citations, and experiment results. | Cited verdict or an undetermined result. |
+
+### Engineering choices that matter
+
+- **Evidence has an identity.** Tool outputs receive stable content-derived IDs; unsupported model citations stop the workflow.
+- **Live failure stays visible.** Provider errors produce a failed investigation, rather than a substituted diagnosis.
+- **Experiments execute in Python.** The model selects an allowlisted intervention; it does not invent metric values or execute arbitrary code.
+- **Approval is explicit.** Applying a simulation is session-bound, transactional, and safe to repeat.
+- **Public access defaults to replay.** The provider key stays on the server; controlled live access uses a separate operator secret.
+- **Work is bounded.** Limits cover model requests, tool invocations, output tokens, wall time, and global live starts.
+
+## Under the hood
+
+```mermaid
+flowchart TD
+    UI["React command center"] --> API["FastAPI"]
+    API --> MODE{"Investigation mode"}
+    MODE --> REPLAY["Illustrative replay"]
+    MODE --> INVEST["Investigator · tools"]
+    INVEST --> SKEPTIC["Skeptic · hypotheses"]
+    SKEPTIC --> EXP["Experimenter · Python model"]
+    EXP --> JUDGE["Judge · citation validation"]
+    JUDGE --> GATE{"Human approval"}
+    REPLAY --> GATE
+    GATE --> RECOVERY["Simulated recovery"]
+    API --> STORE["SQLite · sessions and quotas"]
+```
+
+**React 19 + TypeScript + Vite** present the workflow. **FastAPI + Pydantic** validate requests and model outputs. The official **Google Gen AI SDK** handles live inference. **SQLite** persists investigations and atomically reserves quotas on one host. **Nginx + Docker Compose** package the application.
+
+The roles run sequentially. Events are returned after investigation completion; this version does not stream live agent activity.
+
+## Run it
+
+### Fastest path: Docker
+
+```bash
+git clone https://github.com/Manoj-619/incident-zero.git
+cd incident-zero
+cp .env.example .env
+docker compose up --build -d
+```
+
+Open **http://localhost:5173** and choose **Run replay demo**. No API key is required for replay.
+
+<details>
+<summary><strong>Run without Docker</strong> — Python 3.12 and Node 22</summary>
+
+Backend:
 
 ```bash
 python -m venv .venv
@@ -17,41 +130,33 @@ cd backend
 uvicorn app.main:app --port 8000 --no-proxy-headers
 ```
 
-In a second terminal:
+Frontend, in a second terminal:
 
 ```bash
-cd frontend
+cd incident-zero/frontend
 npm ci
 npm run dev
 ```
 
-Open http://localhost:5173. Replay works without a key. It is an **illustrative scripted example**, not a previously recorded LLM investigation. Reset creates a fresh view; running again creates a separate investigation.
+Open **http://localhost:5173**.
 
-## Controlled live access
+</details>
 
-Configure `GEMINI_API_KEY` and a strong random `DEMO_SECRET` in the server environment. Keep `ALLOW_PUBLIC_LIVE=false`. Enter the operator secret in the password input at runtime. It is held in React memory only, never embedded in a Vite bundle. Use HTTPS for remote access; this shared operator secret is appropriate for a controlled demo, not enterprise identity management. No provider key is ever sent to the browser.
+### Controlled live AI
 
-`GEMINI_MODEL` defaults to `gemini-2.5-flash`; choose a model available in your account. The client uses the official `google-genai` SDK, JSON output, an output-token cap, a 20-second request timeout, and a single provider attempt. Account/model availability and paid live inference require separate verification with your key.
+Set these on the server, using a local ignored `.env` file or your host's secret settings:
 
-Clients generate a random per-tab capability in session storage, sent as `X-Session-Token`. The database stores its hash. Read and approval endpoints require the same capability. Losing it loses access to that tab's investigation. This is anonymous session isolation, not user authentication.
+```dotenv
+GEMINI_API_KEY=your_server_side_key
+GEMINI_MODEL=gemini-3.8-flash
+ALLOW_PUBLIC_LIVE=false
+DEMO_SECRET=your_long_random_operator_secret
+LIVE_DAILY_CAP=5
+```
 
-## Limits and persistence
+Restart the backend, enter the **operator secret** in the app, then launch a live investigation. Choose a model available to your account. The Gemini key and operator secret serve different purposes; neither belongs in frontend build variables.
 
-SQLite stores investigations for 24 hours and atomically reserves quotas across processes on **one host using the same database file**. The live cap is global, defaults to five starts per rolling 24-hour window, and includes failed attempts. IP throttling uses the direct peer; forwarded headers are ignored. Behind a reverse proxy, visitors share its rate bucket, a conservative default. Set rate limiting and body limits at the trusted edge before increasing traffic.
-
-Investigations allow at most eight LLM requests and twelve Python tool/experiment invocations. Typical successful workflow makes five LLM requests. A wall deadline is checked between calls; an in-flight call can extend it by up to the provider timeout. Requests complete synchronously; events include actual stage timestamps, but are delivered after completion, not streamed.
-
-These controls bound requests and tokens, **not INR spend**. Provider pricing, input/output usage, and billing must be checked separately. Set provider billing controls for your ₹500 budget; keep public access in replay. Multiple hosts need a shared transactional quota store and investigation database. Do not run SQLite over a network filesystem.
-
-## Evidence and simulations
-
-Runtime scenario objects contain no answer key; evaluation truth exists only under `backend/tests`, excluded from the backend image. Tool arguments are allowlisted, and evidence IDs hash tool name, arguments and output. Model citations must exist in the collected ledger. This verifies provenance, **not whether an inference logically follows**; review the cited output.
-
-Simulation uses an explicitly approximate additive latency model:
-
-`checkout_after = max(0, checkout_before - pool_wait - lock_wait) + pool_after + lock_after`
-
-Increasing pool capacity halves pool wait; shortening lock windows reduces lock wait to 25%. Results come from Python, without shell execution or model-generated code. These assumed effects do not independently prove real-world causality. Remediation is available only for a cited, sufficiently confident verdict and a tested intervention improving modeled latency by at least 10%. Approval applies simulated recovery values atomically and idempotently; it never touches real infrastructure.
+The configured limits bound requests and tokens, not currency spending. Model availability, free-tier quotas, and provider billing controls must be verified for your project.
 
 ## Verification
 
@@ -63,20 +168,28 @@ npm ci
 npm run build
 ```
 
-CI runs backend tests, dependency validation, the frontend build, and container builds. Tests cover session isolation, atomic quotas, explicit and idempotent approval, unsupported evidence, tool inputs, ground-truth separation, simulation math, provider failures, and a mocked complete live workflow. Mocked provider tests are not evidence that live Gemini works.
+**32 local tests passed** after the model and provider-error fixes. Coverage includes tool validation, unsupported citations, answer-key separation, deterministic simulations, anonymous session isolation, atomic quotas, approval idempotency, provider failure handling, and a complete workflow with a **mocked** provider.
 
-## Containers and deployment
+GitHub CI verifies backend tests, dependency compatibility, the frontend build, and Docker startup with HTTP checks for replay, approval, and recovery. The status badge above reflects the current workflow result.
 
-```bash
-cp .env.example .env
-# Edit server settings; leave keys out of Git.
-docker compose up --build -d
-```
+## Scope, honestly
 
-Visit http://localhost:5173. Compose keeps the backend internal, runs it as a non-root user, and persists state in a named volume. Frontend uses a committed npm lockfile. Backend image excludes tests and evaluation truth. Nginx limits body size, adds browser security headers, and waits up to 150 seconds for investigation responses.
+| Available now | Needed for an enterprise rollout |
+| :-- | :-- |
+| Synthetic checkout incident and illustrative replay | Real telemetry and incident ingestion |
+| Bounded Gemini-based investigation code | Successful live validation and model evaluation suite |
+| Anonymous session capabilities and operator secret | Enterprise identity and role-based authorization |
+| SQLite persistence and single-host quotas | Distributed storage and queued execution |
+| Deterministic counterfactual model | Validated causal models and real operational evidence |
+| Human-approved simulated remediation | Separately engineered production action controls |
 
-For remote hosting, terminate HTTPS with your hosting provider or a trusted reverse proxy, route it to the frontend, and adjust the loopback binding deliberately. Back up the state volume and restrict access to it. Verify `/health`, replay, isolated approval, and a controlled live investigation before sharing the URL. This React/FastAPI application is not a Streamlit Community Cloud project.
+The current fixture contains **three log entries and aggregate metrics**. Confidence scores are heuristic. Citation checks establish provenance, not logical entailment. SQLite quotas require a shared local database file on one host. These are deliberate limits of the current demonstration.
 
-## Remaining production work
+See the [operating guide](docs/OPERATIONS.md) for expiry, budget limits, HTTPS deployment, persistent storage, and operational constraints.
 
-This remains a **hardened simulation demo**, not a production SRE platform. Enterprise rollout needs authenticated users and authorization, real telemetry adapters, queue-based execution, shared storage, audit retention, observability, load testing, key rotation, model evaluations, and independent security review. The current fixture has only three log entries and aggregate metrics; it is not a rich production telemetry dataset. No production infrastructure integration or deployment is claimed.
+---
+
+<p align="center">
+  <strong>Challenge the diagnosis. Test the assumption. Keep the evidence.</strong><br />
+  Built by <a href="https://github.com/Manoj-619">Manoj</a> · INCIDENT ZERO
+</p>

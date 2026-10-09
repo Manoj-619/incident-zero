@@ -8,7 +8,7 @@ from app.agents.judge import run_judge
 from app.agents.skeptic import run_skeptic
 from app.budget import BudgetExceeded, BudgetTracker
 from app.config import Settings
-from app.llm.gemini_client import GeminiClient
+from app.llm.gemini_client import GeminiClient, ProviderError
 from app.models import (
     InvestigationPhase,
     InvestigationState,
@@ -127,6 +127,11 @@ def run_live_investigation(settings: Settings, scenario_id: str) -> Investigatio
         state.budget = exc.snapshot
         state.events.append(_event("budget", f"Stopped: {exc.snapshot.reason}"))
 
+    except ProviderError as exc:
+        state.phase = InvestigationPhase.FAILED
+        state.verdict = None
+        state.remediation = None
+        state.events.append(_event("failed", str(exc)))
     except Exception:
         state.phase = InvestigationPhase.FAILED
         state.verdict = None
