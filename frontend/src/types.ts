@@ -5,6 +5,7 @@ export type InvestigationPhase =
   | "experiment"
   | "judge"
   | "complete"
+  | "failed"
   | "budget_exceeded";
 
 export interface ToolCallRecord {
@@ -47,6 +48,7 @@ export interface RemediationPlan {
   simulated: boolean;
   approved: boolean;
   executed: boolean;
+  recovery: Record<string, number>;
 }
 
 export interface InvestigationState {

@@ -11,8 +11,6 @@ class Scenario(BaseModel):
     title: str
     alert_text: str
     public_summary: str
-    initial_hypothesis_hint: str
-    ground_truth_internal_only: str
     tool_fixtures: dict
     counterfactual_script_template: str
 

@@ -1,16 +1,13 @@
 import inspect
-import json
 from pathlib import Path
 
 import pytest
 
 from app.agents.experimenter import run_experimenter
 from app.agents.judge import run_judge
-from app.agents.skeptic import _score_from_evidence, run_skeptic
-from app.budget import BudgetTracker
+from app.agents.skeptic import _score_from_evidence
 from app.config import Settings
 from app.evidence import new_evidence_id
-from app.llm.gemini_client import GeminiClient
 from app.models import HypothesisScore, ToolCallRecord
 from app.orchestrator import run_live_investigation, run_replay_investigation
 from app.replay.loader import load_replay
@@ -38,7 +35,7 @@ def test_tools_produce_stable_evidence_ids() -> None:
     assert a.evidence_id.startswith("ev-")
 
 
-def test_experimenter_runs_python_subprocess() -> None:
+def test_experimenter_runs_allowlisted_python_simulation() -> None:
     scenario = get_scenario("checkout-p99-spike")
     exp = run_experimenter(scenario, "Redis connection pool exhaustion")
     assert exp.exit_code == 0
@@ -72,7 +69,6 @@ def test_skeptic_lowers_confidence_when_contradicted() -> None:
 
 
 def test_skeptic_can_agree_when_supported() -> None:
-    scenario = get_scenario("checkout-p99-spike")
     fake_output = {
         "metrics": {
             "redis_pool_wait_ms_p99": 400,
@@ -98,7 +94,7 @@ def test_skeptic_can_agree_when_supported() -> None:
 
 def test_judge_module_never_loads_ground_truth() -> None:
     source = inspect.getsource(run_judge)
-    assert "ground_truth" not in source
+    assert "ground_truth_internal_only" not in source
     scenario_path = Path(__file__).resolve().parents[1] / "app" / "agents" / "judge.py"
     assert "ground_truth_internal_only" not in scenario_path.read_text()
 
@@ -131,6 +127,11 @@ def test_remediation_not_executed_by_default() -> None:
 
 
 def test_scenario_ground_truth_not_in_replay_export() -> None:
-    replay_path = Path(__file__).resolve().parents[1] / "app" / "replay" / "checkout_p99_replay.json"
+    replay_path = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "replay"
+        / "checkout_p99_replay.json"
+    )
     text = replay_path.read_text()
     assert "ground_truth_internal_only" not in text

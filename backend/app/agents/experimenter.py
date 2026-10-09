@@ -18,7 +18,9 @@ def run_experimenter(
 
     code_key = scenario.counterfactual_script_template
     if "redis" in h or "pool" in h:
-        template = code_key if code_key in ("pool_exhaustion_sim",) else "pool_exhaustion_sim"
+        template = (
+            code_key if code_key in ("pool_exhaustion_sim",) else "pool_exhaustion_sim"
+        )
 
     from app.sandbox.runner import SCRIPT_MAP
 

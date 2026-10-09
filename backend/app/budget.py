@@ -37,7 +37,20 @@ class BudgetTracker:
             raise BudgetExceeded(snap)
         return snap
 
+    def check_wall(self):
+        if time.monotonic() - self._start >= self._settings.max_wall_seconds:
+            raise BudgetExceeded(self.snapshot())
+
+    def reserve_tool(self):
+        self.check_wall()
+        if self.tool_calls >= self._settings.max_tool_calls:
+            raise BudgetExceeded(self.snapshot())
+        self.tool_calls += 1
+
     def inc_llm(self) -> None:
+        self.check_wall()
+        if self.llm_rounds >= self._settings.max_llm_rounds:
+            raise BudgetExceeded(self.snapshot())
         self.llm_rounds += 1
 
     def inc_tool(self) -> None:
