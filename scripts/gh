@@ -1,0 +1,3 @@
+#!/bin/sh
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$ROOT/tools/gh_2.63.2_macOS_arm64/bin/gh" "$@"

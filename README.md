@@ -39,3 +39,22 @@ cd backend && pytest -q
 cp .env.example .env
 docker compose up --build
 ```
+
+## Push to GitHub (no Homebrew)
+
+GitHub CLI is bundled under `tools/` (not committed). Run **one command per line**:
+
+```bash
+cd "/Users/manojkumar/Downloads/Incident zero"
+chmod +x scripts/gh scripts/push-to-github.sh
+./scripts/gh auth login
+./scripts/push-to-github.sh
+```
+
+For `auth login`, choose: **GitHub.com** → **HTTPS** → **Login with a web browser**.
+
+Private repo instead of public:
+
+```bash
+./scripts/gh repo create incident-zero --private --source=. --remote=origin --push
+```
