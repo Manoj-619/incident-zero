@@ -1,195 +1,182 @@
-<p align="center">
-  <img src="docs/assets/incident-zero-banner.svg" alt="INCIDENT ZERO — intelligence that challenges its own diagnosis" width="100%" />
-</p>
+<div align="center">
 
-<p align="center">
-  <strong>Investigate the incident. Challenge the hypothesis. Test the intervention.</strong><br />
-  Evidence-driven AI incident investigation with an explicit human approval gate.
-</p>
+<img src="docs/assets/hero.svg" alt="ORBIT SENTINEL — Evidence before every burn" width="100%" />
 
-<p align="center">
-  <a href="https://github.com/Manoj-619/incident-zero/actions/workflows/ci.yml"><img src="https://github.com/Manoj-619/incident-zero/actions/workflows/ci.yml/badge.svg" alt="Verification workflow" /></a>
-  <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square" alt="Python 3.12" />
-  <img src="https://img.shields.io/badge/React-19-00E5FF?style=flat-square" alt="React 19" />
-  <img src="https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square" alt="FastAPI backend" />
-  <img src="https://img.shields.io/badge/Gemini-live_AI-8E75B2?style=flat-square" alt="Gemini integration" />
-  <img src="https://img.shields.io/badge/Environment-simulation-FFB547?style=flat-square" alt="Simulation environment" />
-</p>
+**Orbital mechanics. Adversarial review. Human authority.**
 
-<p align="center">
-  <a href="#the-demo">Watch the workflow</a> ·
-  <a href="#run-it">Run locally</a> ·
-  <a href="#under-the-hood">Architecture</a> ·
-  <a href="docs/OPERATIONS.md">Operating guide</a>
-</p>
+An auditable mission-control simulator that detects a close approach, challenges its uncertainty, searches avoidance maneuvers, and independently checks the result.
+
+[![Mission assurance](https://github.com/Manoj-619/incident-zero/actions/workflows/ci.yml/badge.svg?branch=orbit-sentinel)](https://github.com/Manoj-619/incident-zero/actions?query=branch%3Aorbit-sentinel)
+![Python](https://img.shields.io/badge/Python-3.12-142433?logo=python&logoColor=58e5cb)
+![React](https://img.shields.io/badge/React-19-142433?logo=react&logoColor=58e5cb)
+![Three.js](https://img.shields.io/badge/Three.js-WebGL-142433?logo=threedotjs&logoColor=58e5cb)
+![Mode](https://img.shields.io/badge/Mission-Simulation_only-25483f)
+
+[Quick start](#launch-mission-control) · [The mathematics](docs/NUMERICS.md) · [Architecture](docs/ARCHITECTURE.md) · [Operations](docs/OPERATIONS.md) · [Contribute](CONTRIBUTING.md)
+
+</div>
 
 ---
 
-## An alert is a starting point. Evidence earns the verdict.
+### Space is unforgiving. Decisions shouldn’t be opaque.
 
-Production incidents reward fast answers. They also punish the wrong ones.
+A small nominal miss distance is not enough to justify a burn. A wide miss is not enough to dismiss a warning. Orbit uncertainty, fuel cost, and the next encounter all matter.
 
-**INCIDENT ZERO** explores a more rigorous AI workflow: gather telemetry, challenge the leading explanation, compute a controlled counterfactual, and compare the evidence before proposing a response.
+**ORBIT SENTINEL turns that tradeoff into an inspectable workflow.** Every probability comes from a numerical tool. Every candidate is screened against every listed object. An independent verifier can reject the planner. A human accepts the simulated maneuver.
 
-Four specialized roles work through a bounded, sequential investigation. Python executes the tools and simulation. Gemini generates the live assessments. The human decides whether to apply the proposed **simulated** intervention.
+<div align="center">
+<img src="docs/assets/mission-preview.gif" alt="Animated projection of the recorded synthetic crossing encounter, comparing baseline and planned trajectories" width="100%" />
+<sub>Actual recorded numerical output rendered as an orthographic mission projection. This is a presentation visualization, not a dashboard screencast or live spacecraft telemetry.</sub>
+</div>
 
-> **Project status:** A hardened proof of concept on synthetic telemetry. Replay works without an API key. Live mode integrates Gemini, but recent generation attempts returned provider overload errors; a complete live investigation has not yet been verified. No production infrastructure is connected.
+### One encounter. A measurable change.
 
-## The demo
+The bundled crossing case uses fictional ECI states and explicitly synthetic covariance. With a 1 m/s budget and a 10⁻⁴ acceptance threshold:
 
-<p align="center">
-  <img src="docs/assets/counterfactual-lab.gif" alt="Animated counterfactual lab comparing synthetic baseline latency with two modeled interventions" width="100%" />
-  <br /><sub>Illustrative workflow animation. Synthetic data and simulated effects; not recorded live AI inference.</sub>
-</p>
+| Evidence | Before | Selected maneuver |
+|:---|---:|---:|
+| Nominal miss distance / primary encounter | 35.47 m | 226.01 m |
+| Nominal collision probability / primary encounter | 1.678 × 10⁻² | 1.124 × 10⁻⁹ |
+| Worst probability across covariance stress cases / primary encounter | See recorded evidence | 7.601 × 10⁻⁵ |
+| Impulse magnitude | 0 m/s | 0.298 m/s |
+| Catalog objects checked | 2 | 2 |
+| Decision | Search required | Verified; human approval pending |
 
-### A misleading alert. A better question.
+**These probabilities are conditional on the synthetic Gaussian uncertainty and simplified physics. They are not operational collision predictions.** The finite search finds a low-cost evaluated maneuver; it does not prove global optimality.
 
-A checkout alert initially suggests **Redis connection pool exhaustion**. The collected telemetry gives the Skeptic a reason to look elsewhere:
+### Four roles. Bounded authority.
 
-| Collected signal | Synthetic value | What it suggests |
-| :-- | --: | :-- |
-| Checkout P99 latency | **2,140 ms** | The checkout path is degraded. |
-| Redis pool wait | **4 ms** | Pool waiting contributes little to the reported latency. |
-| Redis active / maximum connections | **12 / 50** | The pool is not visibly at capacity. |
-| Database lock wait | **1,820 ms** | Database waiting warrants investigation. |
-| Postgres lock-wait trace share | **71%** | Lock time dominates the trace summary. |
-
-The counterfactual model then compares interventions:
-
-| Modeled condition | Checkout P99 |
-| :-- | --: |
-| Baseline | **2,140 ms** |
-| Double Redis pool capacity | **2,138 ms** |
-| Shorten the database lock window | **775 ms** |
-
-The illustrative replay favors **PostgreSQL row-lock contention during settlement**. These comparisons test explicit simulation assumptions; they do not establish real-world causality.
-
-## The investigation engine
-
-| Role | Responsibility | Reviewable output |
-| :-- | :-- | :-- |
-| **Investigator** | Select allowlisted tools and assess the returned telemetry. | Initial hypothesis, collected evidence, heuristic confidence. |
-| **Skeptic** | Challenge causal assumptions and compare an alternative explanation. | Supporting evidence, contradictions, revised assessment. |
-| **Experimenter** | Select a permitted counterfactual intervention. | Deterministic Python-computed outcome. |
-| **Judge** | Compare hypotheses, citations, and experiment results. | Cited verdict or an undetermined result. |
-
-### Engineering choices that matter
-
-- **Evidence has an identity.** Tool outputs receive stable content-derived IDs; unsupported model citations stop the workflow.
-- **Live failure stays visible.** Provider errors produce a failed investigation, rather than a substituted diagnosis.
-- **Experiments execute in Python.** The model selects an allowlisted intervention; it does not invent metric values or execute arbitrary code.
-- **Approval is explicit.** Applying a simulation is session-bound, transactional, and safe to repeat.
-- **Public access defaults to replay.** The provider key stays on the server; controlled live access uses a separate operator secret.
-- **Work is bounded.** Limits cover model requests, tool invocations, output tokens, wall time, and global live starts.
-
-## Under the hood
+| Role | Tool responsibility | Evidence produced |
+|:---|:---|:---|
+| **Tracker** | Propagate states and covariance; refine closest approaches | TCA, nominal miss, relative speed, encounter geometry |
+| **Risk analyst** | Evaluate collision probability and challenge covariance size | 0.5× / 1× / 2× sigma stress cases |
+| **Maneuver planner** | Search burn times, RTN axes, signs, and magnitudes | Candidate frontier, fuel cost, follow-on encounters |
+| **Verifier** | Repeat trajectory integration and probability calculation independently | Agreement checks, threshold checks, Monte Carlo diagnostic |
 
 ```mermaid
 flowchart TD
-    UI["React command center"] --> API["FastAPI"]
-    API --> MODE{"Investigation mode"}
-    MODE --> REPLAY["Illustrative replay"]
-    MODE --> INVEST["Investigator · tools"]
-    INVEST --> SKEPTIC["Skeptic · hypotheses"]
-    SKEPTIC --> EXP["Experimenter · Python model"]
-    EXP --> JUDGE["Judge · citation validation"]
-    JUDGE --> GATE{"Human approval"}
-    REPLAY --> GATE
-    GATE --> RECOVERY["Simulated recovery"]
-    API --> STORE["SQLite · sessions and quotas"]
+    Encounter["Synthetic encounter"] --> Track["Propagate and screen"]
+    Track --> Challenge["Challenge covariance"]
+    Challenge --> Safe{"All stressed risks below limit?"}
+    Safe -->|Yes| VerifyNoBurn["Verify no-burn result"]
+    Safe -->|No| Plan["Search fuel-bounded maneuvers"]
+    Plan --> Verify["Independent RK4 and probability checks"]
+    Verify --> Pass{"Checks pass?"}
+    Pass -->|Yes| Human["Human reviews simulated maneuver"]
+    Pass -->|No| Hold["Hold / no approval"]
+    VerifyNoBurn --> StandDown["Stand down / preserve propellant"]
 ```
 
-**React 19 + TypeScript + Vite** present the workflow. **FastAPI + Pydantic** validate requests and model outputs. The official **Google Gen AI SDK** handles live inference. **SQLite** persists investigations and atomically reserves quotas on one host. **Nginx + Docker Compose** package the application.
+**Numerical mode** is deterministic orchestration and works without an API key. **Gemini-assisted mode** uses the official Google Gen AI SDK to select a bounded search policy and return a cited review. The model cannot calculate authoritative probabilities, relax the verifier, authorize a burn, or execute code.
 
-The roles run sequentially. Events are returned after investigation completion; this version does not stream live agent activity.
+### Mission control, built for inspection
 
-## Run it
+- **Interactive 3D orbital theater** — real computed trajectories, mission-time scrubbing, baseline/maneuver comparison, and a cinema view.
+- **Encounter-plane geometry** — projected Gaussian covariance, the 3σ ellipse, and combined hard-body disk.
+- **Maneuver frontier** — fuel cost against worst stressed risk, including rejected candidates.
+- **Live agent journal** — fetch-based SSE events with tool starts, evidence, progress, and decisions.
+- **Human approval gate** — explicit review, server-enforced verification, and idempotent simulated acceptance.
+- **Downloadable evidence report** — parameters, results, assumptions, and the event journal.
+- **Three reproducible scenarios** — dangerous crossing, uncertainty trap, and a quiet orbit where no burn is required.
+- **Standalone recorded demonstration** — fixed numerical outputs with an unmistakable replay label when the backend is absent.
 
-### Fastest path: Docker
+### Mathematics that can be challenged
+
+The engine integrates two-body dynamics and a 6×6 state-transition matrix with DOP853:
+
+$$\ddot r=-\mu\frac{r}{\|r\|^3},\qquad P(t)=\Phi(t)P_0\Phi(t)^T.$$
+
+Collision probability is the mass of a projected 2D Gaussian inside the combined hard-body disk:
+
+$$P_c=\int_{\|u\|\le R}\mathcal N(u;m,C)\,du.$$
+
+The planner uses polar Gauss–Legendre integration. The verifier uses **separate Cartesian adaptive quadrature** and **fixed-step RK4** for nominal trajectory checks. Seeded Monte Carlo includes a Wilson confidence interval; zero hits is never presented as proof of zero risk.
+
+Read the [full numerical contract](docs/NUMERICS.md) for equations, tolerances, units, assumptions, and known limitations.
+
+### Launch mission control
+
+**Docker Compose**
 
 ```bash
-git clone https://github.com/Manoj-619/incident-zero.git
-cd incident-zero
-cp .env.example .env
-docker compose up --build -d
+git clone --branch orbit-sentinel --single-branch https://github.com/Manoj-619/incident-zero.git orbit-sentinel
+cd orbit-sentinel
+docker compose up --build -d --wait
 ```
 
-Open **http://localhost:5173** and choose **Run replay demo**. No API key is required for replay.
+Open **http://localhost:5173**. Numerical mode needs no credentials.
 
-<details>
-<summary><strong>Run without Docker</strong> — Python 3.12 and Node 22</summary>
-
-Backend:
+**Local development**
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-cp .env.example .env
-cd backend
-uvicorn app.main:app --port 8000 --no-proxy-headers
+make install
 ```
 
-Frontend, in a second terminal:
+Run the backend:
 
 ```bash
-cd incident-zero/frontend
-npm ci
+.venv/bin/uvicorn orbit_sentinel.api:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+In another terminal:
+
+```bash
+cd frontend
 npm run dev
 ```
 
-Open **http://localhost:5173**.
-
-</details>
-
-### Controlled live AI
-
-Set these on the server, using a local ignored `.env` file or your host's secret settings:
-
-```dotenv
-GEMINI_API_KEY=your_server_side_key
-GEMINI_MODEL=gemini-3.8-flash
-ALLOW_PUBLIC_LIVE=false
-DEMO_SECRET=your_long_random_operator_secret
-LIVE_DAILY_CAP=5
-```
-
-Restart the backend, enter the **operator secret** in the app, then launch a live investigation. Choose a model available to your account. The Gemini key and operator secret serve different purposes; neither belongs in frontend build variables.
-
-The configured limits bound requests and tokens, not currency spending. Model availability, free-tier quotas, and provider billing controls must be verified for your project.
-
-## Verification
+**Headless simulation**
 
 ```bash
-python -m pytest backend/tests -q
-pip check
-cd frontend
-npm ci
-npm run build
+.venv/bin/python -m orbit_sentinel.cli --scenario crossing --output mission.json
 ```
 
-**32 local tests passed** after the model and provider-error fixes. Coverage includes tool validation, unsupported citations, answer-key separation, deterministic simulations, anonymous session isolation, atomic quotas, approval idempotency, provider failure handling, and a complete workflow with a **mocked** provider.
+**Optional Gemini assistance**
 
-GitHub CI verifies backend tests, dependency compatibility, the frontend build, and Docker startup with HTTP checks for replay, approval, and recovery. The status badge above reflects the current workflow result.
+Configure a fresh server-side `GEMINI_API_KEY`, an available `GEMINI_MODEL`, and `OPERATOR_SECRET`. See [.env.example](.env.example) and [operations](docs/OPERATIONS.md). Provider failures remain visible and never silently become a replay. The bundled evidence uses numerical mode; a successful live Gemini call is not claimed.
 
-## Scope, honestly
+### Codebase map
 
-| Available now | Needed for an enterprise rollout |
-| :-- | :-- |
-| Synthetic checkout incident and illustrative replay | Real telemetry and incident ingestion |
-| Bounded Gemini-based investigation code | Successful live validation and model evaluation suite |
-| Anonymous session capabilities and operator secret | Enterprise identity and role-based authorization |
-| SQLite persistence and single-host quotas | Distributed storage and queued execution |
-| Deterministic counterfactual model | Validated causal models and real operational evidence |
-| Human-approved simulated remediation | Separately engineered production action controls |
+| Area | Purpose |
+|:---|:---|
+| `backend/orbit_sentinel/physics/` | Dynamics, variational equations, probability, planning, verification |
+| `backend/orbit_sentinel/agents/` | Auditable workflow and optional schema-validated Gemini advisor |
+| `backend/orbit_sentinel/api.py` | Strict API, bounded worker, event streaming, ownership |
+| `backend/orbit_sentinel/store.py` | SQLite evidence journal, atomic approval, quota and retention |
+| `backend/tests/` | Physics oracles, workflow behavior, provider contracts, API isolation |
+| `frontend/src/` | React/TypeScript dashboard, Three.js scene, SVG analysis plots |
+| `frontend/public/demo/` | CLI-generated numerical recordings |
+| `docs/` | Numerical assumptions, architecture, operations, visual assets |
+| `scripts/` | HTTP smoke check and evidence-based README animation renderer |
 
-The current fixture contains **three log entries and aggregate metrics**. Confidence scores are heuristic. Citation checks establish provenance, not logical entailment. SQLite quotas require a shared local database file on one host. These are deliberate limits of the current demonstration.
+### Mission assurance
 
-See the [operating guide](docs/OPERATIONS.md) for expiry, budget limits, HTTPS deployment, persistent storage, and operational constraints.
+```bash
+make test
+make build
+python scripts/smoke.py  # against a running Compose instance
+```
 
----
+The test suite checks conservation laws, finite-difference STM agreement, closed-form probability cases, independent numerical agreement, rejected corrupted evidence, no-burn decisions, insufficient budgets, capability isolation, atomic approval, provider gates, and streaming.
 
-<p align="center">
-  <strong>Challenge the diagnosis. Test the assumption. Keep the evidence.</strong><br />
-  Built by <a href="https://github.com/Manoj-619">Manoj</a> · INCIDENT ZERO
-</p>
+GitHub Actions runs numerical/API tests, the frontend production build, and a Docker/HTTP mission smoke test. The workflow badge shows the remote state; checked-in configuration alone does not imply that CI passed.
+
+### Honest scope
+
+This is an **educational research prototype and local/demo application**. It includes synthetic scenarios, two-body gravity, linearized covariance, short-encounter Gaussian risk, and deterministic impulses. It excludes live CDMs/TLE feeds, J2/drag/third-body effects, maneuver delivery uncertainty, spacecraft command transport, flight certification, and unrestricted catalog coverage.
+
+The verifier challenges numerical consistency within the model. It does not establish physical truth. Public hosting requires the identity, abuse controls, and operational infrastructure described in [OPERATIONS.md](docs/OPERATIONS.md).
+
+### Build the next orbit
+
+Contributions welcome: orbital dynamics, covariance calibration, realistic maneuver uncertainty, CDM ingestion, rare-event estimation, stronger evaluations, accessible visualization, and deployment engineering.
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Every new claim should come with evidence; every new model assumption should be visible.
+
+<div align="center">
+
+**MODEL-BOUND EVIDENCE. HUMAN-OWNED DECISIONS.**
+
+Built by [Manoj Abraham](https://github.com/Manoj-619)
+
+</div>

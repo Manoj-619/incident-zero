@@ -1,23 +1,24 @@
-name: Verify
+name: Mission assurance
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  backend:
+  numerical-and-api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r backend/requirements.txt
-      - run: pip check
-      - run: python -m pytest backend/tests -q
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      - run: pip install -r backend/requirements.lock && pip install --no-deps -e backend
+      - run: ruff check backend && ruff format --check backend
+      - run: pytest backend/tests -q
+        env:
+          OPENBLAS_NUM_THREADS: '1'
   frontend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,26 +26,13 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run build
-  containers:
+      - run: npm ci && npm run build
+        working-directory: frontend
+  container-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build and start containers
-        run: |
-          cp .env.example .env
-          docker compose up --build -d --wait --wait-timeout 90
-      - name: Verify packaged replay and recovery
-        run: |
-          curl --fail http://127.0.0.1:5173/health
-          curl --fail -H 'Content-Type: application/json' -H 'X-Session-Token: ci-smoke-session-token-01234567890123456789' -d '{"mode":"replay"}' http://127.0.0.1:5173/api/investigations > /tmp/investigation.json
-          jq -e '.replay == true and .phase == "complete"' /tmp/investigation.json
-          jq '{investigation_id, approved:true}' /tmp/investigation.json > /tmp/approval.json
-          curl --fail -H 'Content-Type: application/json' -H 'X-Session-Token: ci-smoke-session-token-01234567890123456789' --data-binary @/tmp/approval.json http://127.0.0.1:5173/api/remediation/approve | jq -e '.remediation.executed == true and .remediation.recovery.checkout_p99_after_ms < 2140'
-      - name: Container logs
-        if: failure()
-        run: docker compose logs
-      - name: Stop containers
-        if: always()
-        run: docker compose down
+      - run: docker compose up --build -d --wait
+      - run: python scripts/smoke.py
+      - if: always()
+        run: docker compose logs --no-color && docker compose down

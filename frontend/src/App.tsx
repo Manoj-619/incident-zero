@@ -1,286 +1,944 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { InvestigationState, ScenarioSummary } from "./types";
+import { useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  ArrowDownToLine,
+  ArrowRight,
+  Check,
+  ChevronRight,
+  CircleDot,
+  Crosshair,
+  Expand,
+  Layers,
+  Orbit,
+  Pause,
+  Play,
+  Radio,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  TriangleAlert,
+  Waypoints,
+  X,
+} from "lucide-react";
+import OrbitScene from "./OrbitScene";
+import { EncounterPlot, SearchPlot, clock, probability } from "./Charts";
+import {
+  approveMission,
+  downloadReport,
+  eventStream,
+  getMission,
+  startMission,
+} from "./api";
+import type { Decision, Event, Recording, Result, ScenarioId } from "./types";
 
-const API = "";
-const sessionToken = sessionStorage.getItem("incident-session") ?? crypto.randomUUID();
-sessionStorage.setItem("incident-session", sessionToken);
-async function api(path: string, options: RequestInit = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 150000);
-  try {
-    const response = await fetch(API + path, {...options, signal: controller.signal,
-      headers: {...options.headers, "X-Session-Token": sessionToken}});
-    const value = await response.json();
-    if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "Request rejected");
-    return value;
-  } finally { clearTimeout(timeout); }
-}
-
-function confidenceBar(value: number, tone: "rose" | "emerald" | "amber") {
-  const color =
-    tone === "rose" ? "bg-rose-500" : tone === "emerald" ? "bg-emerald-500" : "bg-amber-400";
-  return (
-    <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
-      <div className={`h-full ${color} transition-all duration-700`} style={{ width: `${value * 100}%` }} />
-    </div>
-  );
-}
+const scenarios: { id: ScenarioId; name: string; description: string }[] = [
+  {
+    id: "crossing",
+    name: "Crossing paths",
+    description: "High-speed crossing · 2 debris objects",
+  },
+  {
+    id: "uncertain",
+    name: "Uncertainty trap",
+    description: "Inflated covariance · nominal miss can mislead",
+  },
+  {
+    id: "clear",
+    name: "Quiet orbit",
+    description: "Benign encounter · conserve propellant",
+  },
+];
+const roles = [
+  {
+    key: "tracker",
+    title: "TRACKER",
+    icon: Crosshair,
+    description: "Propagate & detect",
+  },
+  {
+    key: "risk_analyst",
+    title: "RISK ANALYST",
+    icon: Activity,
+    description: "Challenge uncertainty",
+  },
+  {
+    key: "planner",
+    title: "MANEUVER PLANNER",
+    icon: Waypoints,
+    description: "Search & minimize Δv",
+  },
+  {
+    key: "verifier",
+    title: "VERIFIER",
+    icon: ShieldCheck,
+    description: "Independent cross-check",
+  },
+];
+const describe = (event: Event) => {
+  const payload = event.payload;
+  if (event.kind === "tool_started")
+    return String(payload.tool).replaceAll("_", " ");
+  if (event.kind === "search_progress")
+    return `${payload.evaluations} candidates evaluated · ${payload.feasible_directions} feasible directions`;
+  if (event.kind === "decision")
+    return `Mission decision: ${String(payload.decision).replaceAll("_", " ")}`;
+  if (event.kind === "provider_policy")
+    return "Gemini selected a bounded tool policy";
+  if (event.kind === "provider_review")
+    return "Gemini review returned with evidence citations";
+  if (event.kind === "no_burn") return "Risk below threshold · preserve fuel";
+  if (event.kind === "error") return String(payload.message);
+  if (event.kind === "approval") return "Human accepted the simulated maneuver";
+  return `Evidence recorded: ${payload.id ?? event.kind}`;
+};
 
 export default function App() {
-  const [scenario, setScenario] = useState<ScenarioSummary | null>(null);
-  const [state, setState] = useState<InvestigationState | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [publicConfig, setPublicConfig] = useState<{ gemini_configured: boolean; allow_public_live: boolean } | null>(
-    null,
-  );
-  const [operatorSecret, setOperatorSecret] = useState("");
-  const [approving, setApproving] = useState(false);
-  const [guidedStep, setGuidedStep] = useState(0);
-  const guidedDemo = true;
-
+  const [result, setResult] = useState<Result | null>(null),
+    [scenario, setScenario] = useState<ScenarioId>("crossing");
+  const [events, setEvents] = useState<Event[]>([]),
+    [running, setRunning] = useState(false),
+    [error, setError] = useState("");
+  const [online, setOnline] = useState(false),
+    [geminiAvailable, setGeminiAvailable] = useState(false),
+    [mode, setMode] = useState("numerical");
+  const [budget, setBudget] = useState(1),
+    [threshold, setThreshold] = useState(1e-4),
+    [operator, setOperator] = useState("");
+  const [time, setTime] = useState(0),
+    [playing, setPlaying] = useState(false),
+    [after, setAfter] = useState(false),
+    [decision, setDecision] = useState<Decision>("approval_pending");
+  const [source, setSource] = useState<"replay" | "backend">("replay"),
+    [missionId, setMissionId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false),
+    [approving, setApproving] = useState(false),
+    [tab, setTab] = useState<"risk" | "verification" | "assumptions">("risk");
+  const [cinema, setCinema] = useState(false);
+  const abort = useRef<AbortController | null>(null),
+    replayTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
+    journalRef = useRef<HTMLDivElement>(null);
+  const loadRecording = async (id: ScenarioId) => {
+    const response = await fetch(`/demo/${id}.json`);
+    if (!response.ok)
+      throw new Error(
+        "Recorded mission could not be loaded. Start the backend to compute a mission.",
+      );
+    return response.json() as Promise<Recording>;
+  };
   useEffect(() => {
-    Promise.all([api("/api/scenarios"), api("/api/config/public")])
-      .then(([list, config]) => {setScenario(list[0] ?? null); setPublicConfig(config);})
-      .catch(e => setError(e instanceof Error ? e.message : "Failed to load dashboard"));
-  }, []);
-
-  const run = useCallback(async (mode: "replay" | "live") => {
-    if (!scenario) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      const secret = operatorSecret;
-      if (secret) headers["X-Demo-Secret"] = secret;
-      const data: InvestigationState = await api("/api/investigations", {
-        method: "POST", headers,
-        body: JSON.stringify({ scenario_id: scenario.scenario_id, mode }),
-      });
-      setState(data);
-      setGuidedStep(0);
-      if (mode === "replay" && guidedDemo) {
-        const steps = data.events.length || 6;
-        for (let i = 1; i <= steps; i += 1) {
-          await new Promise((r) => setTimeout(r, 900));
-          setGuidedStep(i);
+    let active = true;
+    loadRecording("crossing")
+      .then((recording) => {
+        if (active) {
+          setResult(recording.result);
+          setEvents(recording.events);
+          setDecision(recording.result.decision);
         }
+      })
+      .catch((e) => setError(e.message));
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((health) => {
+        if (active) {
+          setOnline(true);
+          setGeminiAvailable(health.gemini_configured);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      abort.current?.abort();
+      if (replayTimer.current) clearTimeout(replayTimer.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (!playing || !result) return;
+    let last = performance.now();
+    let frame: number;
+    const animate = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      setTime((value) => {
+        const next = value + dt * 45;
+        if (next >= result.horizon_s) {
+          setPlaying(false);
+          return result.horizon_s;
+        }
+        return next;
+      });
+      frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, result]);
+  useEffect(() => {
+    if (journalRef.current)
+      journalRef.current.scrollTop = journalRef.current.scrollHeight;
+  }, [events]);
+  async function run() {
+    setError("");
+    setRunning(true);
+    setDecision("blocked");
+    setPlaying(false);
+    setAfter(false);
+    setTime(0);
+    setEvents([]);
+    setMissionId(null);
+    abort.current?.abort();
+    try {
+      if (!online) {
+        if (mode !== "numerical" || budget !== 1 || threshold !== 1e-4)
+          throw new Error(
+            "Bundled replay uses fixed parameters: 1 m/s budget and 10⁻⁴ threshold. Start the backend for custom runs.",
+          );
+        setSource("replay");
+        const recording = await loadRecording(scenario);
+        let i = 0;
+        const step = () => {
+          setEvents((previous) => [...previous, recording.events[i]]);
+          i++;
+          if (i < recording.events.length) {
+            replayTimer.current = setTimeout(step, 320);
+          } else {
+            setResult(recording.result);
+            setDecision(recording.result.decision);
+            setRunning(false);
+          }
+        };
+        step();
       } else {
-        setGuidedStep(999);
+        setSource("backend");
+        const created = await startMission(
+          scenario,
+          mode,
+          budget,
+          threshold,
+          operator,
+        );
+        setMissionId(created.id);
+        abort.current = new AbortController();
+        await eventStream(
+          created.id,
+          (event) => setEvents((previous) => [...previous, event]),
+          abort.current.signal,
+        );
+        const mission = await getMission(created.id);
+        if (mission.error) throw new Error(mission.error);
+        if (!mission.result)
+          throw new Error(
+            "Mission did not complete. Retry after checking the backend.",
+          );
+        setResult(mission.result);
+        setDecision(mission.status as Decision);
+        setRunning(false);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Request failed");
-    } finally {
-      setLoading(false);
+      setError(e instanceof Error ? e.message : "Mission failed.");
+      setRunning(false);
     }
-  }, [scenario, operatorSecret]);
-
-  const approveRemediation = async () => {
-    if (!state?.remediation) return;
+  }
+  async function approve() {
+    if (!result?.verification.passed) return;
     setApproving(true);
     try {
-      setState(await api("/api/remediation/approve", {method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({investigation_id:state.investigation_id,approved:true})}));
-    } catch (e) {setError(e instanceof Error ? e.message : "Approval failed");}
-    finally {setApproving(false);}
-
-  };
-
-  const initialHyp = state?.hypotheses[0];
-  const skepticHyp = state?.hypotheses[1];
-  const experiment = state?.experiments[0];
-
-  const timeline = useMemo(() => state?.events ?? [], [state]);
-
+      if (source === "backend") {
+        if (!missionId)
+          throw new Error("No completed backend mission is available.");
+        await approveMission(missionId);
+      }
+      setDecision("approved");
+      setAfter(true);
+      setTime(0);
+      setPlaying(true);
+      setConfirm(false);
+      setEvents((previous) => [
+        ...previous,
+        {
+          sequence: previous.length + 1,
+          role: "human",
+          kind: "approval",
+          payload: { simulation_only: true },
+        },
+      ]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Approval failed.");
+    } finally {
+      setApproving(false);
+    }
+  }
+  if (!result)
+    return (
+      <div className="loading">
+        <Orbit size={42} />
+        <h1>ORBIT SENTINEL</h1>
+        <p>{error || "Loading mission control…"}</p>
+      </div>
+    );
+  const baseline = result.baseline[0],
+    current = after
+      ? result.after.find((event) => event.object_id === baseline.object_id)!
+      : baseline;
+  const lastRole = events.at(-1)?.role;
+  const displayedRisk = after
+    ? current.worst_stress_probability
+    : baseline.worst_stress_probability;
+  const changed =
+    result.scenario !== scenario ||
+    result.parameters.max_delta_v_ms !== budget ||
+    result.parameters.risk_threshold !== threshold ||
+    result.mode !== mode;
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#27272a_0%,_#09090b_55%)]">
-      <header className="border-b border-zinc-800/80 backdrop-blur sticky top-0 z-10 bg-zinc-950/70">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-amber-400/90 mono">Incident response</p>
-            <h1 className="text-2xl font-semibold tracking-tight">INCIDENT ZERO</h1>
-          </div>
-          <div className="flex gap-2">
+    <div className={`app ${cinema ? "cinema" : ""}`}>
+      <header className="topbar">
+        <a className="brand" href="#">
+          <span className="logo">
+            <Orbit size={27} />
+          </span>
+          <span>
+            ORBIT<span className="brand-light"> SENTINEL</span>
+            <small>CONJUNCTION INTELLIGENCE / V0.1</small>
+          </span>
+        </a>
+        <div className="top-status">
+          <span className="status-dot" />
+          {online ? "COMPUTE ONLINE" : "BUNDLED REPLAY"}
+          <span className="separator">/</span>
+          <span>SYNTHETIC MISSION</span>
+        </div>
+        <a
+          className="repo-link"
+          href="https://github.com/Manoj-619/incident-zero/tree/orbit-sentinel"
+          target="_blank"
+          rel="noreferrer"
+        >
+          MANOJ ABRAHAM <ArrowRight size={14} />
+        </a>
+      </header>
+      <aside className="sidebar">
+        <div className="rail-label">MISSION / SETUP</div>
+        <h2>
+          Every burn
+          <br />
+          needs evidence.
+        </h2>
+        <p className="intro">
+          Detect the encounter. Challenge the risk. Verify the escape.
+        </p>
+        <label className="field-label">SCENARIO</label>
+        <div className="scenario-options">
+          {scenarios.map((item) => (
             <button
-              type="button"
-              onClick={() => run("replay")}
-              disabled={loading || !scenario}
-              className="px-4 py-2 rounded-lg bg-amber-500 text-zinc-950 font-medium hover:bg-amber-400 disabled:opacity-50"
+              key={item.id}
+              disabled={running}
+              className={`scenario ${scenario === item.id ? "selected" : ""}`}
+              onClick={() => setScenario(item.id)}
             >
-              Run replay demo
+              <span className="scenario-radio" />
+              <span>
+                <strong>{item.name}</strong>
+                <small>{item.description}</small>
+              </span>
+              {scenario === item.id && <ChevronRight size={15} />}
+            </button>
+          ))}
+        </div>
+        <label className="field-label" htmlFor="mode">
+          ORCHESTRATION
+        </label>
+        <select
+          id="mode"
+          disabled={running}
+          value={mode}
+          onChange={(event) => setMode(event.target.value)}
+        >
+          <option value="numerical">Numerical agents · no API key</option>
+          <option value="gemini" disabled={!geminiAvailable}>
+            Gemini-assisted planning
+          </option>
+        </select>
+        {mode === "gemini" && (
+          <label className="secret-label">
+            Operator secret
+            <input
+              type="password"
+              autoComplete="off"
+              value={operator}
+              onChange={(event) => setOperator(event.target.value)}
+              disabled={running}
+            />
+            <small>Held in memory for this session.</small>
+          </label>
+        )}
+        <div className="slider-label">
+          <label className="field-label" htmlFor="budget">
+            MANEUVER BUDGET
+          </label>
+          <strong>
+            {budget.toFixed(2)} <span>m/s</span>
+          </strong>
+        </div>
+        <input
+          id="budget"
+          type="range"
+          min="0.05"
+          max="2"
+          step="0.05"
+          value={budget}
+          disabled={running || !online}
+          onChange={(event) => setBudget(Number(event.target.value))}
+        />
+        <div className="range-ends">
+          <span>0.05 m/s</span>
+          <span>2.00 m/s</span>
+        </div>
+        <label className="field-label" htmlFor="threshold">
+          RISK ACCEPTANCE LIMIT
+        </label>
+        <select
+          id="threshold"
+          disabled={running || !online}
+          value={threshold}
+          onChange={(event) => setThreshold(Number(event.target.value))}
+        >
+          <option value={1e-3}>10⁻³ · exploratory</option>
+          <option value={1e-4}>10⁻⁴ · default</option>
+          <option value={1e-5}>10⁻⁵ · strict</option>
+          <option value={1e-6}>10⁻⁶ · very strict</option>
+        </select>
+        <button className="primary launch" disabled={running} onClick={run}>
+          {running ? (
+            <>
+              <span className="spinner" /> MISSION IN PROGRESS
+            </>
+          ) : (
+            <>
+              <Play size={15} />
+              {online ? "RUN INVESTIGATION" : "PLAY RECORDED MISSION"}
+              <ArrowRight size={15} />
+            </>
+          )}
+        </button>
+        <p className="setup-note">
+          {online
+            ? "Computes new trajectories and records an auditable event journal."
+            : "Replay contains actual precomputed tool results. Start the backend for fresh calculations."}
+        </p>
+        <div className="sidebar-bottom">
+          <ShieldCheck size={19} />
+          <div>
+            HUMAN AUTHORITY
+            <small>Approval changes simulation state only.</small>
+          </div>
+        </div>
+      </aside>
+      <main>
+        <section className="mission-heading">
+          <div>
+            <span className="eyebrow">
+              MISSION CONTROL <span>/</span> {result.title}
+            </span>
+            <h1>
+              Space is unforgiving.
+              <br />
+              <span>Decisions shouldn’t be opaque.</span>
+            </h1>
+          </div>
+          <div className="heading-meta">
+            <span
+              className={`source-badge ${source === "backend" ? "compute" : ""}`}
+            >
+              <Radio size={12} />
+              {source === "replay"
+                ? "RECORDED NUMERICAL RUN"
+                : result.mode === "gemini"
+                  ? "GEMINI + NUMERICAL TOOLS"
+                  : "FRESH NUMERICAL RUN"}
+            </span>
+            <small>ECI / km · seconds · Δv in m/s</small>
+          </div>
+        </section>
+        {error && (
+          <div className="error-banner" role="alert">
+            <TriangleAlert size={16} />
+            {error}
+            <button aria-label="Dismiss error" onClick={() => setError("")}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        {changed && (
+          <div className="pending-banner">
+            Setup changed. Run the investigation to update the displayed
+            results.
+          </div>
+        )}
+        <section className="metrics">
+          <div>
+            <span>STRESSED COLLISION RISK</span>
+            <strong
+              className={
+                displayedRisk > result.parameters.risk_threshold
+                  ? "coral"
+                  : "mint"
+              }
+            >
+              {probability(displayedRisk)}
+            </strong>
+            <small>Worst of 0.5× / 1× / 2× sigma</small>
+          </div>
+          <div>
+            <span>NOMINAL MISS DISTANCE</span>
+            <strong>
+              {current.miss_distance_m.toFixed(1)} <em>m</em>
+            </strong>
+            <small>At closest approach · {clock(current.tca_s)}</small>
+          </div>
+          <div>
+            <span>SELECTED MANEUVER</span>
+            <strong>
+              {result.maneuver?.delta_v_ms.toFixed(3) ?? "0.000"} <em>m/s</em>
+            </strong>
+            <small>
+              {result.maneuver
+                ? `Impulse at T+${clock(result.maneuver.burn_time_s)}`
+                : "No fuel spent · no burn required"}
+            </small>
+          </div>
+          <div>
+            <span>INDEPENDENT VERIFICATION</span>
+            <strong className={result.verification.passed ? "mint" : "coral"}>
+              {result.verification.passed ? "PASSED" : "BLOCKED"}{" "}
+              <ShieldCheck size={19} />
+            </strong>
+            <small>RK4 + separate probability quadrature</small>
+          </div>
+        </section>
+        <section className="visual-row">
+          <div className="panel orbit-panel">
+            <div className="panel-heading">
+              <span>
+                <CircleDot size={13} /> ORBITAL THEATER
+              </span>
+              <button
+                className="icon-button"
+                aria-label={cinema ? "Exit cinema view" : "Enter cinema view"}
+                onClick={() => setCinema(!cinema)}
+              >
+                <Expand size={15} />
+              </button>
+            </div>
+            <OrbitScene result={result} time={time} after={after} />
+            <div className="scene-label">
+              <span className="scene-cross" />
+              <strong>EARTH / LEO</strong>
+              <small>Two-body simulation · procedural globe</small>
+            </div>
+            <div className="scene-time">
+              <small>MISSION ELAPSED</small>
+              <strong>T+{clock(time)}</strong>
+            </div>
+            <div className="legend">
+              <span>
+                <i className="mint-dot" />
+                SENTINEL / 01
+              </span>
+              <span>
+                <i className="coral-dot" />
+                DEBRIS / 17
+              </span>
+              <span>
+                <i className="blue-dot" />
+                DEBRIS / 42
+              </span>
+            </div>
+            <div className="view-toggle">
+              <button
+                className={!after ? "active" : ""}
+                onClick={() => setAfter(false)}
+              >
+                BASELINE
+              </button>
+              <button
+                className={after ? "active" : ""}
+                disabled={!result.maneuver}
+                onClick={() => setAfter(true)}
+              >
+                {decision === "approved"
+                  ? "ACCEPTED MANEUVER"
+                  : "MANEUVER PREVIEW"}
+              </button>
+            </div>
+            <div className="timeline">
+              <button
+                className="icon-button"
+                aria-label={
+                  playing ? "Pause orbit animation" : "Play orbit animation"
+                }
+                onClick={() => setPlaying(!playing)}
+              >
+                {playing ? <Pause size={15} /> : <Play size={15} />}
+              </button>
+              <input
+                aria-label="Mission time"
+                type="range"
+                min="0"
+                max={result.horizon_s}
+                step="1"
+                value={time}
+                onChange={(event) => {
+                  setPlaying(false);
+                  setTime(Number(event.target.value));
+                }}
+              />
+              <span>{clock(result.horizon_s)}</span>
+              <button
+                className="icon-button"
+                aria-label="Reset mission time"
+                onClick={() => setTime(0)}
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
+          </div>
+          <div className="panel encounter-panel">
+            <div className="panel-heading">
+              <span>
+                <Crosshair size={13} /> ENCOUNTER GEOMETRY
+              </span>
+              <span className="tiny-tag">
+                {after ? "POST-BURN" : "BASELINE"}
+              </span>
+            </div>
+            <EncounterPlot event={current} />
+            <div className="encounter-meta">
+              <div>
+                <small>RELATIVE SPEED</small>
+                <strong>{current.relative_speed_kms.toFixed(2)} km/s</strong>
+              </div>
+              <div>
+                <small>COMBINED RADIUS</small>
+                <strong>{current.hard_body_radius_m.toFixed(0)} m</strong>
+              </div>
+            </div>
+            <div className="risk-note">
+              <TriangleAlert size={14} />
+              <span>
+                Nominal miss distance alone does not determine risk. Covariance
+                changes the conclusion.
+              </span>
+            </div>
+          </div>
+        </section>
+        <section className="workflow">
+          {roles.map((role, index) => {
+            const completed = events.some(
+              (event) =>
+                event.role === role.key &&
+                ["evidence", "no_burn"].includes(event.kind),
+            );
+            const active = running && lastRole === role.key;
+            return (
+              <div
+                key={role.key}
+                className={`agent ${active ? "working" : ""} ${completed ? "done" : ""}`}
+              >
+                <div className="agent-top">
+                  <role.icon size={17} />
+                  <span>0{index + 1}</span>
+                  {active ? (
+                    <span className="spinner" />
+                  ) : completed ? (
+                    <Check size={14} />
+                  ) : (
+                    <span className="waiting-dot" />
+                  )}
+                </div>
+                <strong>{role.title}</strong>
+                <small>{role.description}</small>
+                <div className="agent-line" />
+              </div>
+            );
+          })}
+        </section>
+        <section className="analysis-row">
+          <div className="panel analysis-panel">
+            <div className="tabs" role="tablist" aria-label="Mission analysis">
+              {(["risk", "verification", "assumptions"] as const).map(
+                (item) => (
+                  <button
+                    role="tab"
+                    aria-selected={tab === item}
+                    key={item}
+                    className={tab === item ? "active" : ""}
+                    onClick={() => setTab(item)}
+                  >
+                    {item === "risk" ? "MANEUVER FRONTIER" : item.toUpperCase()}
+                  </button>
+                ),
+              )}
+            </div>
+            {tab === "risk" ? (
+              <>
+                <div className="chart-caption">
+                  <span>Cost vs. worst stressed risk</span>
+                  <small>
+                    {result.candidate_search.length} candidates · finite RTN
+                    search
+                  </small>
+                </div>
+                <SearchPlot result={result} />
+                <div className="comparison-table">
+                  <div className="table-head">
+                    <span>OBJECT</span>
+                    <span>BEFORE / Pc</span>
+                    <span>AFTER / Pc</span>
+                    <span>MISS / m</span>
+                  </div>
+                  {result.baseline.map((before) => {
+                    const post = result.after.find(
+                      (event) => event.object_id === before.object_id,
+                    )!;
+                    return (
+                      <div key={before.object_id}>
+                        <span>{before.object_id.toUpperCase()}</span>
+                        <span>{probability(before.probability)}</span>
+                        <span className="mint">
+                          {probability(post.probability)}
+                        </span>
+                        <span>
+                          {before.miss_distance_m.toFixed(0)} →{" "}
+                          {post.miss_distance_m.toFixed(0)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : tab === "verification" ? (
+              <div className="verification-content">
+                <div className="verify-hero">
+                  <ShieldCheck size={28} />
+                  <strong>
+                    {result.verification.passed
+                      ? "Two methods. One consistent result."
+                      : "Independent verification rejected the result."}
+                  </strong>
+                </div>
+                <p>
+                  {result.verification.integrator}
+                  <br />
+                  {result.verification.probability_method}
+                </p>
+                <div className="verify-stats">
+                  <span>
+                    Maximum path disagreement
+                    <strong>
+                      {result.verification.max_trajectory_disagreement_m.toExponential(
+                        2,
+                      )}{" "}
+                      m
+                    </strong>
+                  </span>
+                  <span>
+                    Unforced energy drift
+                    <strong>
+                      {result.energy_relative_drift.toExponential(2)}
+                    </strong>
+                  </span>
+                  <span>
+                    Monte Carlo hits
+                    <strong>
+                      {result.verification.monte_carlo.hits} /{" "}
+                      {result.verification.monte_carlo.samples.toLocaleString()}
+                    </strong>
+                  </span>
+                </div>
+                <p className="muted">{result.verification.monte_carlo.note}</p>
+                <small>
+                  95% Wilson interval: [
+                  {result.verification.monte_carlo.wilson_95
+                    .map(probability)
+                    .join(", ")}
+                  ]
+                </small>
+              </div>
+            ) : (
+              <div className="assumptions">
+                <p>The confidence is conditional on these assumptions.</p>
+                {result.assumptions.map((assumption, i) => (
+                  <div key={assumption}>
+                    <span>0{i + 1}</span>
+                    {assumption}
+                  </div>
+                ))}
+                <p className="muted">
+                  Numerical agreement tests implementation consistency. It does
+                  not validate the physical assumptions.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="panel journal-panel">
+            <div className="panel-heading">
+              <span>
+                <Terminal size={13} /> AGENT JOURNAL
+              </span>
+              <span className="tiny-tag">{events.length} EVENTS</span>
+            </div>
+            <div className="journal" ref={journalRef} aria-live="polite">
+              {events.map((event, i) => (
+                <div
+                  className={`journal-event ${event.kind === "error" ? "failed" : ""}`}
+                  key={i}
+                >
+                  <span className="event-number">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div>
+                    <small>
+                      {event.role.replaceAll("_", " ").toUpperCase()}
+                    </small>
+                    <p>{describe(event)}</p>
+                  </div>
+                  <span className="event-dot" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+        {result.ai_review && (
+          <section className="panel ai-review">
+            <Sparkles size={18} />
+            <div>
+              <strong>GEMINI REVIEW / ADVISORY</strong>
+              <p>{result.ai_review.summary}</p>
+              <small>
+                Evidence: {result.ai_review.evidence_ids.join(" · ")}
+              </small>
+            </div>
+          </section>
+        )}
+        <section
+          className={`decision-panel ${decision === "blocked" ? "blocked" : ""}`}
+        >
+          <div className="decision-icon">
+            {decision === "blocked" ? (
+              <TriangleAlert size={27} />
+            ) : (
+              <ShieldCheck size={27} />
+            )}
+          </div>
+          <div>
+            <span className="eyebrow">HUMAN APPROVAL GATE</span>
+            <h3>
+              {running
+                ? "Investigation in progress"
+                : decision === "approved"
+                  ? "Simulated maneuver accepted"
+                  : decision === "no_burn"
+                    ? "Stand down. Preserve propellant."
+                    : decision === "blocked"
+                      ? "Hold. No verified maneuver available."
+                      : "Verified candidate. Your decision."}
+            </h3>
+            <p>
+              {decision === "approval_pending"
+                ? "The verifier passed. Review the evidence before accepting the maneuver preview."
+                : "Simulation only. This system never transmits spacecraft commands."}
+            </p>
+          </div>
+          <div className="decision-actions">
+            <button
+              className="secondary"
+              disabled={running || !!error}
+              onClick={() =>
+                downloadReport({ result, events, status: decision, source })
+              }
+            >
+              <ArrowDownToLine size={15} /> REPORT
+            </button>
+            {decision === "approval_pending" && (
+              <button
+                className="primary"
+                disabled={running || !result.verification.passed}
+                onClick={() => setConfirm(true)}
+              >
+                REVIEW & APPROVE <ArrowRight size={15} />
+              </button>
+            )}
+          </div>
+        </section>
+        <footer>
+          <span>
+            <Layers size={13} /> MODEL-BOUND EVIDENCE. HUMAN-OWNED DECISIONS.
+          </span>
+          <span>
+            40-MINUTE HORIZON / SYNTHETIC COVARIANCE / NO LIVE COMMANDS
+          </span>
+        </footer>
+      </main>
+      {confirm && (
+        <div className="modal-backdrop">
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-title"
+          >
+            <button
+              className="close-modal"
+              aria-label="Close approval dialog"
+              onClick={() => setConfirm(false)}
+            >
+              <X size={18} />
+            </button>
+            <ShieldCheck size={36} />
+            <span className="eyebrow">SIMULATION AUTHORIZATION</span>
+            <h2 id="approval-title">Accept this maneuver?</h2>
+            <p>
+              You are accepting a simulated trajectory change. No spacecraft
+              command will be generated or transmitted.
+            </p>
+            <div className="approval-summary">
+              <span>
+                Delta-v
+                <strong>{result.maneuver!.delta_v_ms.toFixed(3)} m/s</strong>
+              </span>
+              <span>
+                Burn time
+                <strong>T+{clock(result.maneuver!.burn_time_s)}</strong>
+              </span>
+              <span>
+                Worst stressed Pc
+                <strong>
+                  {probability(result.maneuver!.worst_stress_probability)}
+                </strong>
+              </span>
+            </div>
+            <p className="muted">
+              Only the listed synthetic objects and declared model assumptions
+              have been checked.
+            </p>
+            <button
+              className="primary"
+              autoFocus
+              disabled={approving}
+              onClick={approve}
+            >
+              {approving ? "ACCEPTING…" : "ACCEPT SIMULATED MANEUVER"}
+              <Check size={16} />
             </button>
             <button
-              type="button"
-              onClick={() => run("live")}
-              disabled={loading || !scenario || !publicConfig?.gemini_configured || (!publicConfig.allow_public_live && !operatorSecret)}
-              className="px-4 py-2 rounded-lg border border-zinc-600 hover:border-zinc-400 disabled:opacity-50"
-              title={publicConfig?.allow_public_live ? "Live LLM investigation" : "Requires server DEMO_SECRET / ALLOW_PUBLIC_LIVE"}
+              className="secondary"
+              disabled={approving}
+              onClick={() => setConfirm(false)}
             >
-              Live investigation
+              KEEP UNDER REVIEW
             </button>
           </div>
         </div>
-      </header>
-
-      <div className="max-w-6xl mx-auto px-6 pt-4 text-sm text-zinc-400">
-        <p>SIMULATION ENVIRONMENT · Replay is an illustrative scripted trace · Confidence scores are heuristic estimates.</p>
-        {publicConfig?.gemini_configured && !publicConfig.allow_public_live && <input aria-label="Operator access secret" type="password" autoComplete="off" placeholder="Operator access secret" value={operatorSecret} onChange={e => setOperatorSecret(e.target.value)} className="mt-3 bg-zinc-900 border border-zinc-700 rounded px-3 py-2" />}
-      </div>
-      <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
-        {scenario && (
-          <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
-            <h2 className="text-lg font-semibold mb-1">{scenario.title}</h2>
-            <p className="text-zinc-400 text-sm mb-3">{scenario.public_summary}</p>
-            <p className="mono text-sm text-rose-300/90 bg-zinc-950/60 rounded-lg px-4 py-3 border border-rose-900/40">
-              {scenario.alert_text}
-            </p>
-          </section>
-        )}
-
-        {error && (
-          <div className="rounded-xl border border-rose-800 bg-rose-950/30 px-4 py-3 text-rose-200 text-sm">{error}</div>
-        )}
-
-        {loading && <p className="text-zinc-400 animate-pulse">Running investigation pipeline…</p>}
-
-        {state && <div className="flex gap-3 text-sm">
-          <button className="border border-zinc-700 rounded px-3 py-2" onClick={() => {setState(null); setGuidedStep(0);}}>Reset view</button>
-          <button className="border border-zinc-700 rounded px-3 py-2" onClick={() => {
-            const text = `# INCIDENT ZERO — Simulation postmortem\n\nMode: ${state.replay ? "Illustrative replay" : "Live AI on synthetic telemetry"}\n\n## Verdict\n${state.verdict?.leading_hypothesis ?? "Undetermined"}\n\n${state.verdict?.explanation ?? "Investigation incomplete"}\n\n## Evidence\n${state.verdict?.evidence_ids.join(", ") ?? "None"}\n\n## Timeline\n${state.events.map(e => `- ${e.phase}: ${e.message}`).join("\n")}\n\n## Limitations\nSynthetic telemetry; simulations test explicit assumptions and do not establish real-world causality. Confidence is heuristic.\n\n## Artifacts\n\n\`\`\`json\n${JSON.stringify(state, null, 2)}\n\`\`\`\n`;
-            const url = URL.createObjectURL(new Blob([text], {type:"text/markdown"}));
-            const a = document.createElement("a"); a.href=url; a.download=`incident-${state.investigation_id}.md`; a.click(); URL.revokeObjectURL(url);
-          }}>Download postmortem</button>
-        </div>}
-        {state && (
-          <>
-            {guidedDemo && guidedStep < 999 && (
-              <p className="text-center text-sm text-amber-300/90 animate-pulse">
-                Guided demo · step {Math.min(guidedStep, state.events.length)} / {state.events.length}
-              </p>
-            )}
-            <section className="grid lg:grid-cols-2 gap-6">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-semibold">Hypothesis Battle</h3>
-                  <span className="text-xs mono text-zinc-500">{state.replay ? "REPLAY" : "LIVE"}</span>
-                </div>
-                {initialHyp && guidedStep >= 1 && (
-                  <div className="mb-6">
-                    <p className="text-sm text-zinc-400 mb-1">Initial read</p>
-                    <p className="font-medium">{initialHyp.hypothesis}</p>
-                    <div className="mt-2">{confidenceBar(initialHyp.posterior_confidence, "amber")}</div>
-                    <p className="text-xs text-zinc-500 mt-1">{Math.round(initialHyp.posterior_confidence * 100)}% confidence</p>
-                  </div>
-                )}
-                {skepticHyp && guidedStep >= 2 && (
-                  <div>
-                    <p className="text-sm text-zinc-400 mb-1">After Skeptic (evidence-weighted)</p>
-                    <p className="font-medium">{skepticHyp.hypothesis}</p>
-                    <div className="mt-2">{confidenceBar(skepticHyp.posterior_confidence, "rose")}</div>
-                    <p className="text-xs text-zinc-500 mt-1">{Math.round(skepticHyp.posterior_confidence * 100)}% confidence</p>
-                    <p className="text-sm text-zinc-300 mt-3 leading-relaxed">{skepticHyp.rationale}</p>
-                    {skepticHyp.contradicting_evidence_ids.length > 0 && (
-                      <p className="mono text-xs text-rose-300/80 mt-2">
-                        Contradictions: {skepticHyp.contradicting_evidence_ids.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-                <h3 className="text-base font-semibold mb-4">Counterfactual Lab</h3>
-                {experiment && guidedStep >= 3 ? (
-                  <>
-                    <p className="text-sm text-zinc-400 mb-2">Deterministic Python simulation</p>
-                    <p className="text-sm mb-3">{experiment.summary}</p>
-                    <pre className="mono text-xs bg-zinc-950 rounded-lg p-4 border border-zinc-800 overflow-x-auto text-emerald-200/90">
-                      {experiment.stdout}
-                    </pre>
-                    <p className="mono text-xs text-zinc-500 mt-2">experiment_id: {experiment.experiment_id}</p>
-                  </>
-                ) : (
-                  <p className="text-zinc-500 text-sm">No experiment yet.</p>
-                )}
-              </div>
-            </section>
-
-            {guidedStep >= 1 && (
-            <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
-              <h3 className="text-base font-semibold mb-4">Evidence (tool outputs)</h3>
-              <div className="space-y-3">
-                {state.tool_calls.map((t) => (
-                  <details key={t.evidence_id} className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-4 py-3">
-                    <summary className="cursor-pointer mono text-sm">
-                      {t.evidence_id} · {t.tool_name}
-                    </summary>
-                    <pre className="mono text-xs mt-3 overflow-x-auto text-zinc-400">
-                      {JSON.stringify(t.output, null, 2)}
-                    </pre>
-                  </details>
-                ))}
-              </div>
-            </section>
-            )}
-
-            {state.verdict && guidedStep >= 4 && (
-              <section className="rounded-2xl border border-emerald-900/50 bg-emerald-950/20 p-6">
-                <h3 className="text-base font-semibold text-emerald-200 mb-2">Judge verdict</h3>
-                <p className="text-lg font-medium">{state.verdict.leading_hypothesis}</p>
-                <p className="text-sm text-zinc-300 mt-2 leading-relaxed">{state.verdict.explanation}</p>
-                <p className="mono text-xs text-zinc-500 mt-3">
-                  confidence {Math.round(state.verdict.confidence * 100)}% · cites {state.verdict.evidence_ids.join(", ")}
-                </p>
-              </section>
-            )}
-
-            {state.remediation && guidedStep >= 5 && (
-              <section className="rounded-2xl border border-zinc-800 p-6 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-semibold">Simulated remediation</h3>
-                  <p className="text-sm text-zinc-400 mt-1">{state.remediation.action}</p>
-                  {state.remediation.executed && <pre className="text-xs mt-2">{JSON.stringify(state.remediation.recovery, null, 2)}</pre>}
-                  <p className="text-xs text-zinc-500 mt-2">
-                    {state.remediation.executed
-                      ? "Executed after approval"
-                      : "Blocked until you explicitly approve"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={state.remediation.executed || approving}
-                  onClick={approveRemediation}
-                  className="px-4 py-2 rounded-lg bg-zinc-100 text-zinc-900 font-medium disabled:opacity-40"
-                >
-                  Approve simulation
-                </button>
-              </section>
-            )}
-
-            <section className="rounded-xl border border-zinc-800/80 p-4">
-              <h3 className="text-sm font-semibold text-zinc-400 mb-2">Timeline</h3>
-              <ul className="space-y-1 text-sm">
-                {timeline.map((ev, i) => (
-                  <li key={`${ev.phase}-${i}`} className="flex gap-3">
-                    <span className="mono text-xs text-amber-400/80 w-24 shrink-0">{ev.phase}</span>
-                    <span className="text-zinc-300">{ev.message}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mono text-xs text-zinc-600 mt-3">
-                budget: {state.budget.tool_calls} tools · {state.budget.llm_rounds} llm rounds · {state.budget.elapsed_seconds}s
-              </p>
-            </section>
-          </>
-        )}
-
-        {!state && !loading && (
-          <p className="text-zinc-500 text-center py-16">
-            Start with <span className="text-amber-400">Run replay demo</span> — no API key, illustrative example trace.
-          </p>
-        )}
-      </main>
+      )}
     </div>
   );
 }

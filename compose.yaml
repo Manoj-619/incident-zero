@@ -1,0 +1,24 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      OPERATOR_SECRET: ${OPERATOR_SECRET:-}
+      DATABASE_PATH: /app/data/missions.sqlite3
+      OPENBLAS_NUM_THREADS: 1
+    volumes:
+      - missions:/app/data
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 2
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5173:8080"
+    restart: unless-stopped
+volumes:
+  missions:

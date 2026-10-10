@@ -1,79 +1,100 @@
-export type InvestigationPhase =
-  | "init"
-  | "investigate"
-  | "skeptic"
-  | "experiment"
-  | "judge"
-  | "complete"
-  | "failed"
-  | "budget_exceeded";
-
-export interface ToolCallRecord {
-  tool_name: string;
-  arguments: Record<string, unknown>;
-  output: Record<string, unknown>;
-  evidence_id: string;
+export type ScenarioId = "crossing" | "uncertain" | "clear";
+export type Decision = "approval_pending" | "approved" | "no_burn" | "blocked";
+export interface Encounter {
+  object_id: string;
+  tca_s: number;
+  miss_distance_m: number;
+  relative_speed_kms: number;
+  probability: number;
+  mean_plane_m: number[];
+  covariance_plane_m2: number[][];
+  ellipse_3sigma_m: number[];
+  ellipse_rotation_rad: number;
+  hard_body_radius_m: number;
+  stress_tests: { sigma_scale: number; probability: number }[];
+  worst_stress_probability: number;
 }
-
-export interface HypothesisScore {
-  hypothesis: string;
-  prior_confidence: number;
-  posterior_confidence: number;
-  supporting_evidence_ids: string[];
-  contradicting_evidence_ids: string[];
-  rationale: string;
+export interface Path {
+  times_s: number[];
+  positions_km: number[][];
 }
-
-export interface ExperimentResult {
-  experiment_id: string;
-  hypothesis_tested: string;
-  code_hash: string;
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-  summary: string;
-  supports_hypothesis: boolean | null;
+export interface OrbitObject extends Path {
+  id: string;
+  name: string;
+  kind: string;
 }
-
-export interface Verdict {
-  leading_hypothesis: string;
-  confidence: number;
-  explanation: string;
-  evidence_ids: string[];
-  experiment_ids: string[];
+export interface Event {
+  sequence: number;
+  created?: number;
+  role: string;
+  kind: string;
+  payload: Record<string, unknown>;
 }
-
-export interface RemediationPlan {
-  action: string;
-  simulated: boolean;
-  approved: boolean;
-  executed: boolean;
-  recovery: Record<string, number>;
-}
-
-export interface InvestigationState {
-  investigation_id: string;
-  scenario_id: string;
-  phase: InvestigationPhase;
-  replay: boolean;
-  tool_calls: ToolCallRecord[];
-  hypotheses: HypothesisScore[];
-  experiments: ExperimentResult[];
-  verdict: Verdict | null;
-  remediation: RemediationPlan | null;
-  budget: {
-    llm_rounds: number;
-    tool_calls: number;
-    elapsed_seconds: number;
-    exceeded: boolean;
-    reason: string | null;
+export interface Verification {
+  passed: boolean;
+  integrator: string;
+  probability_method: string;
+  max_trajectory_disagreement_m: number;
+  checks: {
+    object_id: string;
+    rk4_tca_s: number;
+    rk4_miss_distance_m: number;
+    miss_agreement_m: number;
+    independent_probability: number;
+    probability_absolute_error: number;
+    worst_stress_probability: number;
+    passed: boolean;
+  }[];
+  monte_carlo: {
+    samples: number;
+    hits: number;
+    estimate: number;
+    wilson_95: number[];
+    note: string;
   };
-  events: { phase: string; message: string }[];
+  limitations: string;
 }
-
-export interface ScenarioSummary {
-  scenario_id: string;
+export interface Result {
+  schema_version: number;
+  scenario: ScenarioId;
   title: string;
-  public_summary: string;
-  alert_text: string;
+  mode: string;
+  source: string;
+  parameters: {
+    scenario: ScenarioId;
+    mode: string;
+    max_delta_v_ms: number;
+    risk_threshold: number;
+    seed: number;
+  };
+  horizon_s: number;
+  decision: Decision;
+  baseline: Encounter[];
+  after: Encounter[];
+  maneuver: null | {
+    burn_time_s: number;
+    dv_rtn_ms: number[];
+    delta_v_ms: number;
+    worst_stress_probability: number;
+    encounters: Encounter[];
+  };
+  candidate_search: {
+    burn_time_s: number;
+    delta_v_ms: number;
+    dv_rtn_ms: number[];
+    worst_probability: number;
+    feasible: boolean;
+  }[];
+  verification: Verification;
+  objects: OrbitObject[];
+  after_trajectory: Path;
+  policy: { axes: string[]; burn_fractions: number[]; rationale: string };
+  energy_relative_drift: number;
+  duration_s: number;
+  assumptions: string[];
+  ai_review?: { summary: string; caveats: string[]; evidence_ids: string[] };
+}
+export interface Recording {
+  result: Result;
+  events: Event[];
 }

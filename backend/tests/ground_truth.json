@@ -1,3 +1,0 @@
-{
-  "checkout-p99-spike": "PostgreSQL row lock contention on orders table during batch settlement \u2014 not Redis."
-}
