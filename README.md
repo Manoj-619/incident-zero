@@ -157,9 +157,9 @@ make build
 python scripts/smoke.py  # against a running Compose instance
 ```
 
-The test suite checks conservation laws, finite-difference STM agreement, closed-form probability cases, independent numerical agreement, rejected corrupted evidence, no-burn decisions, insufficient budgets, capability isolation, atomic approval, provider gates, and streaming.
+The test suite checks conservation laws, finite-difference STM agreement, closed-form probability cases, independent numerical agreement, rejected corrupted evidence, no-burn decisions, insufficient budgets, capability isolation, atomic approval, provider gates, and streaming. Focused UI tests verify recorded mission completion, the quiet-orbit no-burn decision, and explicit simulation authorization; WebGL is mocked in these tests.
 
-GitHub Actions runs numerical/API tests, the frontend production build, and a Docker/HTTP mission smoke test. The workflow badge shows the remote state; checked-in configuration alone does not imply that CI passed.
+GitHub Actions runs numerical/API tests, frontend replay/approval interaction tests, the frontend production build, and a Docker/HTTP mission smoke test. The workflow badge shows the remote state; checked-in configuration alone does not imply that CI passed.
 
 ### Honest scope
 

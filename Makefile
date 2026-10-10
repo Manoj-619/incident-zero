@@ -8,6 +8,7 @@ install:
 test:
 	.venv/bin/python -m pytest backend/tests -q
 	.venv/bin/ruff check backend
+	cd frontend && npm test
 
 build:
 	cd frontend && npm run build

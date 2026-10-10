@@ -192,15 +192,16 @@ export default function App() {
           throw new Error(
             "Bundled replay uses fixed parameters: 1 m/s budget and 10⁻⁴ threshold. Start the backend for custom runs.",
           );
-        setSource("replay");
         const recording = await loadRecording(scenario);
         let i = 0;
         const step = () => {
-          setEvents((previous) => [...previous, recording.events[i]]);
+          const event = recording.events[i];
+          setEvents((previous) => [...previous, event]);
           i++;
           if (i < recording.events.length) {
             replayTimer.current = setTimeout(step, 320);
           } else {
+            setSource("replay");
             setResult(recording.result);
             setDecision(recording.result.decision);
             setRunning(false);
@@ -208,7 +209,6 @@ export default function App() {
         };
         step();
       } else {
-        setSource("backend");
         const created = await startMission(
           scenario,
           mode,
@@ -229,6 +229,7 @@ export default function App() {
           throw new Error(
             "Mission did not complete. Retry after checking the backend.",
           );
+        setSource("backend");
         setResult(mission.result);
         setDecision(mission.status as Decision);
         setRunning(false);
