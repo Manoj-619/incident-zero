@@ -161,6 +161,8 @@ The test suite checks conservation laws, finite-difference STM agreement, closed
 
 GitHub Actions runs numerical/API tests, frontend replay/approval interaction tests, the frontend production build, and a Docker/HTTP mission smoke test. The workflow badge shows the remote state; checked-in configuration alone does not imply that CI passed.
 
+Real Chromium browser checks additionally validate a WebGL2 context, replay completion, explicit approval, the no-burn scenario, and mobile overflow. [View the passing browser run and its desktop/mobile screenshot artifacts](https://github.com/Manoj-619/incident-zero/actions/runs/38158906116). These checks use the recorded numerical demonstration; live-provider behavior and backend-connected browser flows are separate validation tasks.
+
 ### Honest scope
 
 This is an **educational research prototype and local/demo application**. It includes synthetic scenarios, two-body gravity, linearized covariance, short-encounter Gaussian risk, and deterministic impulses. It excludes live CDMs/TLE feeds, J2/drag/third-body effects, maneuver delivery uncertainty, spacecraft command transport, flight certification, and unrestricted catalog coverage.
